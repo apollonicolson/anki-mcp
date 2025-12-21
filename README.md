@@ -67,57 +67,93 @@ Edit via Anki's *Tools → Add-ons → AnkiMCP Server → Config*:
 
 ## Available Tools
 
-### Essential Tools
+Over 100 tools organized by category. All search/list tools support pagination with `limit` and `offset` parameters.
+
+### Core Tools
 
 | Tool | Description |
 |------|-------------|
 | `sync` | Synchronize collection with AnkiWeb |
-| `list_decks` | List all decks in the collection |
-| `create_deck` | Create a new deck |
-| `find_notes` | Search for notes using Anki's search syntax |
-| `notes_info` | Get detailed information about notes |
-| `add_note` | Add a new note to a deck |
-| `update_note_fields` | Update fields of existing notes |
-| `delete_notes` | Delete notes from the collection |
-| `get_due_cards` | Get cards due for review |
-| `present_card` | Get card content for review |
-| `rate_card` | Rate a card after review (Again/Hard/Good/Easy) |
-| `model_names` | List available note types |
-| `model_field_names` | Get field names for a note type |
-| `model_styling` | Get CSS styling for a note type |
-| `update_model_styling` | Update CSS styling for a note type |
-| `create_model` | Create a new note type |
-| `store_media_file` | Store a media file (image/audio) |
-| `get_media_files_names` | List media files matching a pattern |
-| `delete_media_file` | Delete a media file |
+| `schema` | Get Anki's data model (entities, fields, relationships) |
+| `query-syntax` | Get documentation for Anki's search syntax |
+| `raw-sql` | Execute read-only SQL queries on Anki's database |
 
-### GUI Tools
-
-These tools interact with Anki's user interface:
+### Decks & Notes
 
 | Tool | Description |
 |------|-------------|
-| `gui_browse` | Open the card browser with a search query |
-| `gui_add_cards` | Open the Add Cards dialog |
-| `gui_edit_note` | Open the note editor for a specific note |
-| `gui_current_card` | Get info about the currently displayed card |
-| `gui_show_question` | Show the question side of current card |
-| `gui_show_answer` | Show the answer side of current card |
-| `gui_select_card` | Select a specific card in the reviewer |
-| `gui_deck_browser` | Navigate to deck browser |
-| `gui_undo` | Undo the last operation |
+| `list-decks` | List decks with optional stats and filtering |
+| `create-deck` | Create a new deck |
+| `find-notes` | Search for notes using Anki's search syntax |
+| `find-cards` | Search for cards using Anki's search syntax |
+| `get-notes-info` | Get detailed information about notes |
+| `get-cards-info` | Get detailed information about cards |
+| `add-note` | Add a new note to a deck |
+| `update-note` | Update fields and/or tags of existing notes |
+| `delete-notes` | Delete notes from the collection |
+
+### Review & Scheduling
+
+| Tool | Description |
+|------|-------------|
+| `get-due-cards` | Get cards due for review |
+| `present-card` | Get card content for review |
+| `rate-card` | Rate a card (Again/Hard/Good/Easy) |
+| `get-forecast` | Predict cards due in coming days |
+| `get-retention-analysis` | Analyze success rate by interval |
+| `get-leech-cards` | Find frequently failed cards |
+
+### Note Types & Media
+
+| Tool | Description |
+|------|-------------|
+| `list-models` | List available note types |
+| `model-field-names` | Get field names for a note type |
+| `create-model` | Create a new note type |
+| `store-media-file` | Store a media file (image/audio) |
+| `list-media-files` | List media files matching a pattern |
+
+### GUI Tools
+
+| Tool | Description |
+|------|-------------|
+| `gui-browse` | Open the card browser with a search query |
+| `gui-add-cards` | Open the Add Cards dialog |
+| `gui-edit-note` | Open the note editor for a specific note |
+| `gui-deck-browser` | Navigate to deck browser |
+| `gui-deck-review` | Start reviewing a deck |
 
 ### Resources
 
-| Resource | Description |
-|----------|-------------|
-| `system_info` | Anki version and system information |
+Read-only data exposed via MCP resource URIs:
+
+| URI | Description |
+|-----|-------------|
+| `anki://system-info` | Anki version and system information |
+| `anki://decks` | All decks with metadata |
+| `anki://deck/{name}` | Specific deck details |
+| `anki://models` | All note types |
+| `anki://tags` | Tag hierarchy |
+| `anki://stats/today` | Today's study statistics |
+| `anki://stats/forecast` | 30-day review forecast |
+| `anki://due` | Due cards overview |
+| `anki://leeches` | Problem cards |
 
 ### Prompts
 
+Guided workflows for common tasks:
+
 | Prompt | Description |
 |--------|-------------|
-| `review_session` | Guided review session workflow |
+| `review_session` | Conduct an interactive review session |
+| `deck_consolidation` | Merge and reorganize decks |
+| `card_improvement` | Analyze and improve card quality |
+| `leech_remediation` | Handle frequently failed cards |
+| `study_planning` | Create a study schedule |
+| `note_creation` | Best practices for creating notes |
+| `collection_cleanup` | Maintain and optimize the collection |
+| `cloze_creation` | Create effective cloze deletions |
+| `language_learning` | Specialized language learning workflow |
 
 ## Requirements
 

@@ -2,21 +2,35 @@
 .idea/
 .vscode/
 *.swp
+*.sublime-*
 
 # Python
 __pycache__/
 *.pyc
 *.pyo
+*.pyd
 .pytest_cache/
 .mypy_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
 
 # Anki addon build artifacts
 *.ankiaddon
 vendor/
 
+# Runtime cache (pydantic_core downloads)
+anki_mcp_server/_cache/
+
 # OS
 .DS_Store
+Thumbs.db
+Desktop.ini
 
 # Claude Code
 .claude/
 .claude-draft/
+
+# Logs
+*.log

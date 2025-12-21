@@ -16,7 +16,7 @@ Anki addon that runs an MCP server inside Anki, exposing collection operations t
 
 - **Package**: `anki_mcp_server.ankiaddon`
 - **Default Port**: 3141
-- **License**: MIT
+- **License**: AGPL-3.0-or-later
 
 ## Architecture
 
@@ -58,62 +58,136 @@ Anki addon that runs an MCP server inside Anki, exposing collection operations t
 ```
 anki_mcp_server/
 ├── __init__.py              # Entry point, hooks registration, pydantic_core loader
-├── addon.py                 # Main addon class, lifecycle management
 ├── config.py                # Configuration from Anki's addon config
 ├── mcp_server.py            # FastMCP server in background thread
 ├── queue_bridge.py          # Thread-safe request/response queue
 ├── request_processor.py     # Main thread handler dispatcher
 ├── handler_registry.py      # Maps tool names to handler functions
-├── settings_dialog.py       # Qt settings UI
-├── primitives/              # MCP tools, resources, prompts
-│   ├── tools.py             # Central tool registration
-│   ├── resources.py         # Central resource registration
-│   ├── prompts.py           # Central prompt registration
-│   ├── essential/           # Core Anki operations
-│   │   ├── tools/           # sync, add_note, find_notes, etc.
-│   │   ├── resources/       # system_info
-│   │   └── prompts/         # review_session
-│   └── gui/                 # GUI interaction tools
-│       └── tools/           # gui_browse, gui_add_cards, etc.
+├── tool_base.py             # T() decorator framework for defining tools
+├── tools.py                 # All MCP tools (single file, progressive disclosure)
+├── resources.py             # MCP resources (system_info, etc.)
+├── prompts.py               # MCP prompts (review_session, etc.)
+├── connection_manager.py    # Connection lifecycle management
+├── dependency_loader.py     # Runtime dependency loading (pydantic_core)
+├── ui/                      # Qt UI components
+│   └── settings_dialog.py   # Settings dialog
+├── transport/               # Transport layer (HTTP)
 └── vendor/                  # Vendored dependencies (mcp, uvicorn, starlette, etc.)
 ```
 
-### Tool Pattern
+### Tool Framework (tool_base.py)
 
-Each tool has two parts:
+Tools use a progressive disclosure pattern with the `T()` class:
 
-1. **MCP Handler** (`primitives/.../tools/*_tool.py`) - Runs in background thread
-   - Registers with FastMCP via decorator
-   - Calls `call_main_thread(tool_name, arguments)`
-   - Returns result to MCP client
-
-2. **Main Thread Handler** (`primitives/.../tools/*_tool.py`) - Runs on Qt main thread
-   - Registers via `@register_handler("tool_name")`
-   - Has safe access to `mw.col`
-   - Returns result dict
-
-Example structure:
 ```python
-# MCP HANDLER - Background thread
-def register_my_tool(mcp, call_main_thread):
-    @mcp.tool(name="my_tool", description="...")
-    async def my_tool(arg: str) -> str:
-        result = await call_main_thread("my_tool", {"arg": arg})
-        return json.dumps(result)
+# Level 1: One-liner (trivial tools)
+T("list-tags", "List all tags", lambda: col().tags.all())
 
-# MAIN THREAD HANDLER - Qt main thread
-@register_handler("my_tool")
-def handle_my_tool(arguments: dict[str, Any]) -> dict[str, Any]:
-    # Safe to access mw.col here
-    return {"status": "success"}
+# Level 2: Decorator (typed tools)
+@T("find-notes", "Search notes")
+def find_notes(query: str, limit: int = 100) -> dict:
+    return {"noteIds": col().find_notes(query)[:limit]}
+
+# Level 3: Full control (complex tools)
+@T("add-note", "Add a note", write=True)
+def add_note(deckName: str, modelName: str, fields: dict) -> dict:
+    deck = col().decks.by_name(deckName)
+    if not deck:
+        raise ToolError(f"Deck not found: {deckName}", hint="Use list-decks")
+    ...
 ```
+
+**Conventions**:
+- Tool names use **kebab-case** (MCP standard): `find-notes`, `add-note`, `gui-browse`
+- Tools require collection by default (`require_col=True`)
+- Tools are read-only by default (`write=True` for mutations)
+- `ToolError` provides structured errors with hints
+- All tools run on Qt main thread (automatic queue bridging)
 
 ## Adding New Tools
 
-1. Create `primitives/essential/tools/my_tool.py` (or `gui/tools/` for GUI tools)
-2. Implement both MCP handler and main thread handler
-3. Add import and registration call to `primitives/tools.py`
+1. Add tool to `tools.py` using the `T()` decorator
+2. Use `write=True` for mutation operations
+3. Use `category="gui"` for GUI-interaction tools
 4. Rebuild: `./package.sh`
+
+Example:
+```python
+@T("my-tool", "Description here", write=True, category="gui")
+def my_tool(arg: str, optional_arg: int = 10) -> dict:
+    # Safe to access col() - runs on main thread
+    return {"result": "..."}
+```
+
+## Tool Design Patterns
+
+### Tool Naming Convention
+
+| Prefix | Use For | Examples |
+|--------|---------|----------|
+| `list-*` | Get collections/arrays | `list-decks`, `list-tags`, `list-media-files` |
+| `get-*` | Get single item or specific data | `get-deck-config`, `get-note-tags` |
+| `find-*` | Search with query | `find-notes`, `find-cards`, `find-duplicates` |
+| `create-*` | Create new | `create-deck`, `create-model` |
+| `add-*` | Add to existing | `add-note`, `add-tags` |
+| `update-*` | Modify existing | `update-note`, `update-model-styling` |
+| `delete-*` | Permanently remove | `delete-deck`, `delete-notes` |
+| `remove-*` | Remove association | `remove-tags` (from notes) |
+| `are-*` / `is-*` | Boolean checks | `are-suspended`, `are-due` |
+| `can-*` | Permission/capability checks | `can-add-notes` |
+
+### Pagination
+
+All list/search tools support pagination to avoid returning unbounded lists:
+
+```python
+@T("find-notes", "Search for notes")
+def find_notes(query: str, limit: int = 100, offset: int = 0):
+    all_ids = col().find_notes(query)
+    return {
+        "noteIds": all_ids[offset:offset + limit],
+        "count": min(limit, len(all_ids) - offset),
+        "total": len(all_ids),
+        "hasMore": offset + limit < len(all_ids),
+        "offset": offset,
+        "limit": limit,
+    }
+```
+
+Paginated tools: `find-notes`, `find-cards`, `list-decks`, `list-tags`, `list-media-files`
+
+### Consolidated Tools
+
+Redundant tools have been merged with optional parameters:
+
+| Tool | Replaces | Key Options |
+|------|----------|-------------|
+| `list-decks` | `deckNames`, `deckNamesAndIds` | `include_stats`, `pattern`, `top_level_only` |
+| `get-deck-due-tree` | `getDeckDueTree` | (none - returns full tree) |
+| `list-models` | `modelNames`, `modelNamesAndIds`, `findModelsById`, `findModelsByName` | `pattern`, `ids`, `names`, `include_fields` |
+| `get-reviews` | `cardReviews`, `getReviewsOfCards`, `getReviewLogs` | `card_ids`, `deck`, `detailed` |
+| `replace-tags` | `replaceTags`, `replaceTagsInAllNotes` | `notes` (optional, all if omitted) |
+| `can-add-notes` | `canAddNotes`, `canAddNotesWithErrorDetail` | `include_errors` |
+| `update-note` | `updateNote`, `updateNoteFields`, `updateNoteTags` | `fields`, `tags` |
+| `get-notes-info` | `notesInfo` | (renamed for consistency) |
+| `get-cards-info` | `cardsInfo` | (renamed for consistency) |
+| `get-notes-for-cards` | `cardsToNotes` | (renamed for clarity) |
+| `delete-empty-notes` | `removeEmptyNotes` | (renamed for consistency) |
+| `delete-deck-config` | `removeDeckConfigId` | (renamed for consistency) |
+| `set-cards-suspended` | `suspendCards`, `unsuspendCards` | `suspended` (bool, default true) |
+| `set-cards-buried` | `buryCards`, `unburyCards` | `buried` (bool, default true) |
+| `get-collection-stats` | `getNumCardsReviewedToday` | (absorbed - returns `reviewsToday`) |
+
+### Boolean List Tools
+
+Tools that check card states return mapped results (not raw boolean arrays):
+
+```python
+@T("are-suspended", "Check if cards are suspended")
+def are_suspended(cards: list[int]):
+    return {card_id: col().get_card(card_id).queue == -1 for card_id in cards}
+# Returns: {1234: true, 5678: false} instead of [true, false]
+```
 
 ## Key Implementation Details
 
@@ -133,11 +207,37 @@ Dependencies are vendored in `vendor/shared/` to avoid conflicts with other addo
 
 `pydantic_core` is special - it's lazy-loaded from PyPI at runtime due to platform-specific binaries.
 
+## Introspection Tools
+
+Three tools help AI understand Anki's data model and query capabilities:
+
+### `schema`
+Exposes Anki's complete data model:
+- **Entities**: note, card, deck, model, revlog, tag
+- **Fields**: All columns with types and descriptions
+- **Relations**: Foreign keys and cardinality (one-to-many, many-to-one)
+- **Key concepts**: note vs card, model, deck hierarchy, scheduling
+
+### `query-syntax`
+Documents Anki's search syntax for `find-notes` and `find-cards`:
+- Basic searches, wildcards, field searches
+- Deck/tag filters, card state (`is:due`, `is:new`)
+- Card properties (`prop:ivl>30`, `prop:ease<2`)
+- Date searches, combining with AND/OR/NOT
+- Practical examples
+
+### `raw-sql`
+Read-only SQLite escape hatch for advanced queries:
+- Only SELECT queries allowed (INSERT/UPDATE/DELETE blocked)
+- Returns columns, rows, count
+- Limited to 1000 rows
+- Supports parameterized queries
+
 ## Documentation
 
 - [Anki Add-on Docs](https://addon-docs.ankiweb.net/) - Official addon development documentation
 - [MCP Protocol](https://modelcontextprotocol.io/) - Model Context Protocol specification
-- [FastMCP](https://github.com/jlowin/fastmcp) - MCP SDK used by this addon
+- [FastMCP](https://gofastmcp.com/) - MCP SDK used by this addon
 
 ## Common Issues
 
