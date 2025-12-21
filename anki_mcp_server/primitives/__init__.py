@@ -1,7 +1,6 @@
 # primitives/__init__.py
 """MCP primitives module - tools, prompts, and resources."""
 
-# Import new compact modules
 from ..tools import register_tools
 from ..prompts import register_all_prompts
 from ..resources import register_all_resources

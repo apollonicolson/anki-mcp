@@ -63,19 +63,33 @@ anki_mcp_server/
 ├── queue_bridge.py          # Thread-safe request/response queue
 ├── request_processor.py     # Main thread handler dispatcher
 ├── handler_registry.py      # Maps tool names to handler functions
-├── tool_base.py             # T() decorator framework for defining tools
-├── tools.py                 # All MCP tools (single file, progressive disclosure)
-├── resources.py             # MCP resources (system_info, etc.)
+├── tools/                   # MCP tools (modular by category)
+│   ├── __init__.py          # Imports all modules, exports register_tools
+│   ├── base.py              # T() decorator framework
+│   ├── misc.py              # sync, version, profiles
+│   ├── decks.py             # Deck management
+│   ├── notes.py             # Note operations
+│   ├── cards.py             # Card operations
+│   ├── tags.py              # Tag management
+│   ├── models.py            # Note type management
+│   ├── media.py             # Media file operations
+│   ├── review.py            # Review & scheduling
+│   ├── stats.py             # Statistics & collection info
+│   ├── backup.py            # Backup & import/export
+│   ├── gui.py               # GUI interaction
+│   ├── introspection.py     # schema, query-syntax, raw-sql
+│   └── image_occlusion.py   # Image occlusion tools
+├── resources.py             # MCP resources (anki://decks, etc.)
 ├── prompts.py               # MCP prompts (review_session, etc.)
 ├── connection_manager.py    # Connection lifecycle management
 ├── dependency_loader.py     # Runtime dependency loading (pydantic_core)
+├── primitives/              # Re-exports for mcp_server.py
 ├── ui/                      # Qt UI components
-│   └── settings_dialog.py   # Settings dialog
 ├── transport/               # Transport layer (HTTP)
-└── vendor/                  # Vendored dependencies (mcp, uvicorn, starlette, etc.)
+└── vendor/                  # Vendored dependencies
 ```
 
-### Tool Framework (tool_base.py)
+### Tool Framework (tools/base.py)
 
 Tools use a progressive disclosure pattern with the `T()` class:
 
@@ -106,14 +120,18 @@ def add_note(deckName: str, modelName: str, fields: dict) -> dict:
 
 ## Adding New Tools
 
-1. Add tool to `tools.py` using the `T()` decorator
-2. Use `write=True` for mutation operations
-3. Use `category="gui"` for GUI-interaction tools
-4. Rebuild: `./package.sh`
+1. Add tool to the appropriate module in `tools/` (e.g., `tools/decks.py`)
+2. Import `T`, `ToolError`, `col` from `.base`
+3. Use `write=True` for mutation operations
+4. Use `category="gui"` for GUI-interaction tools
+5. Rebuild: `./package.sh`
 
 Example:
 ```python
-@T("my-tool", "Description here", write=True, category="gui")
+# In tools/decks.py
+from .base import T, ToolError, col
+
+@T("my-tool", "Description here", write=True)
 def my_tool(arg: str, optional_arg: int = 10) -> dict:
     # Safe to access col() - runs on main thread
     return {"result": "..."}

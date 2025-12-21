@@ -1,50 +1,34 @@
-"""MCP Tool Framework - Progressive Disclosure Design
+"""MCP Tool Framework - Progressive Disclosure Design.
 
 Simple things simple, complex things possible.
 
 ## Level 1: One-liner (trivial tools)
-
-    T("modelNames", "List note types", lambda: col().models.all_names())
-    T("getTags", "Get all tags", lambda: col().tags.all())
+    T("list-tags", "List all tags", lambda: col().tags.all())
 
 ## Level 2: Decorator (typed tools)
-
-    @T("findNotes", "Search notes")
-    def find_notes(query: str) -> list[int]:
-        return col().find_notes(query)
+    @T("find-notes", "Search notes")
+    def find_notes(query: str, limit: int = 100) -> dict:
+        return {"noteIds": col().find_notes(query)[:limit]}
 
 ## Level 3: Full control (complex tools)
-
-    @T("addNote", "Add a note", write=True)
+    @T("add-note", "Add a note", write=True)
     def add_note(deckName: str, modelName: str, fields: dict) -> dict:
-        # Full validation, custom errors, etc.
         deck = col().decks.by_name(deckName)
         if not deck:
-            raise ToolError(f"Deck not found: {deckName}", hint="Use list_decks")
+            raise ToolError(f"Deck not found: {deckName}", hint="Use list-decks")
         ...
-
-Convention over configuration:
-- Tools require collection by default (most do)
-- Tools are read-only by default (write=True for mutations)
-- Success returns are auto-wrapped if not already a dict
-- Errors are auto-formatted with helpful messages
 """
-from typing import Any, Callable, Optional, Union, overload
+from typing import Any, Callable
 from functools import wraps
-from dataclasses import dataclass
 import inspect
 import logging
 
-from .handler_registry import register_handler
+from ..handler_registry import register_handler
 
 logger = logging.getLogger(__name__)
 
 _registry: dict[str, dict] = {}
 
-
-# ============================================================================
-# ToolError - Structured errors with hints
-# ============================================================================
 
 class ToolError(Exception):
     """Raise in handlers to return structured error responses."""
@@ -55,17 +39,13 @@ class ToolError(Exception):
         self.data = data
 
 
-# ============================================================================
-# T - The universal tool definer
-# ============================================================================
-
 class T:
     """Universal tool definer with progressive disclosure.
 
     Adapts to how you use it:
-    - T(name, desc, lambda: ...) → one-liner
-    - @T(name, desc) def fn(): ... → decorator
-    - T(name, desc, handler=fn, write=True) → explicit config
+    - T(name, desc, lambda: ...) -> one-liner
+    - @T(name, desc) def fn(): ... -> decorator
+    - T(name, desc, handler=fn, write=True) -> explicit config
     """
 
     def __init__(
@@ -84,7 +64,6 @@ class T:
         self.require_col = require_col
         self.category = category
 
-        # If handler provided directly, register now (one-liner mode)
         if handler is not None:
             self._register(handler)
 
@@ -96,8 +75,6 @@ class T:
     def _register(self, func: Callable) -> None:
         """Register handler with all wrappers applied."""
         wrapped = func
-
-        # Apply wrappers in correct order (innermost first)
         wrapped = _auto_response(wrapped)
 
         if self.write:
@@ -107,8 +84,6 @@ class T:
             wrapped = _require_col(wrapped)
 
         wrapped = _error_handler(wrapped)
-
-        # Preserve original signature for MCP
         wrapped.__signature__ = inspect.signature(func)
         wrapped.__annotations__ = getattr(func, '__annotations__', {})
         wrapped.__doc__ = func.__doc__
@@ -123,12 +98,7 @@ class T:
         }
 
 
-# ============================================================================
-# Wrappers (applied automatically by T)
-# ============================================================================
-
 def _require_col(func: Callable) -> Callable:
-    """Ensure collection is loaded."""
     @wraps(func)
     def wrapper(*args, **kwargs):
         from aqt import mw
@@ -139,7 +109,6 @@ def _require_col(func: Callable) -> Callable:
 
 
 def _write_lock(func: Callable) -> Callable:
-    """Wrap mutations in reset/maybeReset for UI sync."""
     @wraps(func)
     def wrapper(*args, **kwargs):
         from aqt import mw
@@ -153,7 +122,6 @@ def _write_lock(func: Callable) -> Callable:
 
 
 def _error_handler(func: Callable) -> Callable:
-    """Convert ToolError to response dict, log unexpected errors."""
     @wraps(func)
     def wrapper(*args, **kwargs):
         try:
@@ -170,32 +138,20 @@ def _error_handler(func: Callable) -> Callable:
 
 
 def _auto_response(func: Callable) -> Callable:
-    """Auto-wrap non-dict returns in standard response format."""
     @wraps(func)
     def wrapper(*args, **kwargs):
         result = func(*args, **kwargs)
-
-        # Already a proper response dict
         if isinstance(result, dict) and "success" in result:
             return result
-
-        # Wrap primitives/lists in success response
         if result is None:
             return {"success": True}
         if isinstance(result, (list, tuple)):
             return {"success": True, "result": list(result)}
         if isinstance(result, dict):
             return {"success": True, **result}
-
-        # Scalar values
         return {"success": True, "result": result}
-
     return wrapper
 
-
-# ============================================================================
-# MCP Registration
-# ============================================================================
 
 def register_tools(mcp, call_main_thread: Callable) -> None:
     """Register all T-defined tools with MCP server."""
@@ -204,7 +160,6 @@ def register_tools(mcp, call_main_thread: Callable) -> None:
 
 
 def _make_mcp_tool(mcp, call_main_thread, name: str, meta: dict) -> None:
-    """Create async MCP wrapper."""
     original = meta["original"]
     sig = inspect.signature(original)
 
@@ -218,10 +173,6 @@ def _make_mcp_tool(mcp, call_main_thread, name: str, meta: dict) -> None:
 
     mcp.tool(description=meta["description"])(wrapper)
 
-
-# ============================================================================
-# Helpers - Shortcuts for common Anki operations
-# ============================================================================
 
 def col():
     """Get collection."""
