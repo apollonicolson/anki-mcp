@@ -5,8 +5,15 @@ import re
 
 
 @T("list-models", "List note types with optional filtering")
-def list_models(pattern: str = None, ids: list[int] = None, names: list[str] = None, include_fields: bool = False):
-    """List note types (models) with optional filtering."""
+def list_models(
+    pattern: str = None,
+    ids: list[int] = None,
+    names: list[str] = None,
+    include_fields: bool = False,
+    limit: int = 100,
+    offset: int = 0,
+):
+    """List note types (models) with optional filtering and pagination."""
     import fnmatch
 
     if ids:
@@ -21,6 +28,9 @@ def list_models(pattern: str = None, ids: list[int] = None, names: list[str] = N
     if pattern:
         models = [m for m in models if fnmatch.fnmatch(m["name"].lower(), pattern.lower())]
 
+    total = len(models)
+    models = models[offset:offset + limit]
+
     result = []
     for m in models:
         info = {"id": m["id"], "name": m["name"]}
@@ -28,7 +38,10 @@ def list_models(pattern: str = None, ids: list[int] = None, names: list[str] = N
             info["fields"] = [f["name"] for f in m["flds"]]
         result.append(info)
 
-    return {"models": result, "count": len(result)}
+    meta = {"models": result, "total": total}
+    if offset + limit < total:
+        meta["hasMore"] = True
+    return meta
 
 
 @T("model-field-names", "Get field names for a note type")

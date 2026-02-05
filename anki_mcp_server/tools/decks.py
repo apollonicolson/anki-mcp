@@ -2,46 +2,67 @@
 from .base import T, ToolError, col
 
 
+def _sparse(d: dict) -> dict:
+    """Remove keys with falsy values (0, None, [], '', {}) from dict, recursively."""
+    return {k: (_sparse(v) if isinstance(v, dict) else
+                [_sparse(i) if isinstance(i, dict) else i for i in v] if isinstance(v, list) else v)
+            for k, v in d.items() if v or v is False}
+
+
 @T("list-decks", "List decks with optional filtering and statistics")
 def list_decks(
     include_stats: bool = False,
     pattern: str = None,
-    top_level_only: bool = False,
+    depth: int = -1,
     limit: int = 100,
     offset: int = 0,
+    sparse: bool = True,
 ):
-    """List decks with optional filtering and pagination."""
+    """List decks with optional filtering and pagination.
+
+    Args:
+        depth: Max nesting level (-1=unlimited, 0=root only, 1=root+children, etc.)
+        sparse: Omit zero/empty values from output (default True)
+    """
     import fnmatch
 
     if include_stats:
         tree = col().sched.deck_due_tree()
 
-        def process_node(node, depth=0):
-            if top_level_only and depth > 0:
+        def process_node(node, current_depth=0):
+            if depth >= 0 and current_depth > depth:
                 return None
             if pattern and not fnmatch.fnmatch(node.name.lower(), pattern.lower()):
-                matching_children = [c for c in (process_node(child, depth + 1) for child in node.children) if c]
+                matching_children = [c for c in (process_node(child, current_depth + 1) for child in node.children) if c]
                 if not matching_children:
                     return None
-            return {
+            children = []
+            if depth < 0 or current_depth < depth:
+                children = [c for c in (process_node(child, current_depth + 1) for child in node.children) if c]
+            result = {
                 "id": node.deck_id,
                 "name": node.name,
                 "new": node.new_count,
                 "learn": node.learn_count,
                 "review": node.review_count,
-                "children": [c for c in (process_node(child, depth + 1) for child in node.children) if c] if not top_level_only else [],
+                "children": children,
             }
+            return _sparse(result) if sparse else result
 
         all_decks = [d for d in (process_node(n) for n in tree.children) if d]
         total = len(all_decks)
         decks = all_decks[offset:offset + limit]
-        return {"decks": decks, "count": len(decks), "total": total, "hasMore": offset + limit < total, "offset": offset, "limit": limit, "format": "tree"}
+        meta = {"decks": decks, "total": total}
+        if offset + limit < total:
+            meta["hasMore"] = True
+        return _sparse(meta) if sparse else meta
 
     all_decks = col().decks.all()
     filtered_decks = []
     for d in all_decks:
         name = d["name"]
-        if top_level_only and "::" in name:
+        nest_level = name.count("::")
+        if depth >= 0 and nest_level > depth:
             continue
         if pattern and not fnmatch.fnmatch(name.lower(), pattern.lower()):
             continue
@@ -49,7 +70,10 @@ def list_decks(
 
     total = len(filtered_decks)
     decks = filtered_decks[offset:offset + limit]
-    return {"decks": decks, "count": len(decks), "total": total, "hasMore": offset + limit < total, "offset": offset, "limit": limit, "format": "flat"}
+    meta = {"decks": decks, "total": total}
+    if offset + limit < total:
+        meta["hasMore"] = True
+    return meta
 
 
 @T("create-deck", "Create a new deck. Supports parent::child structure.")
@@ -147,11 +171,16 @@ def get_decks_for_cards(cards: list[int]):
 
 
 @T("get-deck-due-tree", "Get full deck tree with due counts")
-def get_deck_due_tree():
+def get_deck_due_tree(sparse: bool = True):
+    """Get full deck tree with due counts.
+
+    Args:
+        sparse: Omit zero/empty values from output (default True)
+    """
     tree = col().sched.deck_due_tree()
 
     def process_node(node):
-        return {
+        result = {
             "id": node.deck_id,
             "name": node.name,
             "new": node.new_count,
@@ -159,5 +188,6 @@ def get_deck_due_tree():
             "review": node.review_count,
             "children": [process_node(child) for child in node.children],
         }
+        return _sparse(result) if sparse else result
 
     return {"tree": [process_node(n) for n in tree.children]}
