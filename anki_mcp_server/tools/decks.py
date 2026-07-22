@@ -109,7 +109,6 @@ def change_deck(cards: list[int], deck_name: str):
     return {"moved": len(cards), "toDeck": deck_name}
 
 
-@T("get-deck-config", "Get deck options/configuration")
 def get_deck_config(deck_name: str):
     deck = col().decks.by_name(deck_name)
     if not deck:
@@ -118,7 +117,6 @@ def get_deck_config(deck_name: str):
     return {"deckName": deck_name, "config": conf}
 
 
-@T("get-deck-stats", "Get deck statistics")
 def get_deck_stats(deck_name: str):
     deck = col().decks.by_name(deck_name)
     if not deck:
@@ -126,13 +124,11 @@ def get_deck_stats(deck_name: str):
     return {"deckName": deck_name, "deckId": deck["id"]}
 
 
-@T("save-deck-config", "Save deck configuration", write=True)
 def save_deck_config(config: dict):
     col().decks.save(config)
     return {"saved": True, "configId": config.get("id")}
 
 
-@T("set-deck-config-id", "Set config for a deck", write=True)
 def set_deck_config_id(deck_name: str, config_id: int):
     deck = col().decks.by_name(deck_name)
     if not deck:
@@ -142,7 +138,6 @@ def set_deck_config_id(deck_name: str, config_id: int):
     return {"deckName": deck_name, "configId": config_id}
 
 
-@T("clone-deck-config-id", "Clone a deck configuration", write=True)
 def clone_deck_config_id(config_id: int, clone_name: str):
     conf = col().decks.get_config(config_id)
     if not conf:
@@ -151,7 +146,6 @@ def clone_deck_config_id(config_id: int, clone_name: str):
     return {"originalId": config_id, "cloneId": new_conf["id"], "cloneName": clone_name}
 
 
-@T("delete-deck-config", "Delete a deck configuration", write=True)
 def delete_deck_config(config_id: int):
     col().decks.remove_config(config_id)
     return {"removed": config_id}
@@ -169,7 +163,6 @@ def get_decks_for_cards(cards: list[int]):
     return deck_map
 
 
-@T("get-deck-due-tree", "Get full deck tree with due counts")
 def get_deck_due_tree(sparse: bool = True):
     """Get full deck tree with due counts.
 

@@ -44,7 +44,6 @@ def list_models(
     return meta
 
 
-@T("model-field-names", "Get field names for a note type")
 def model_field_names(modelName: str):
     m = col().models.by_name(modelName)
     if not m:
@@ -52,7 +51,6 @@ def model_field_names(modelName: str):
     return [f["name"] for f in m["flds"]]
 
 
-@T("model-styling", "Get CSS styling for a note type")
 def model_styling(modelName: str):
     m = col().models.by_name(modelName)
     if not m:
@@ -69,7 +67,6 @@ def update_model_styling(modelName: str, css: str):
     return {"modelName": modelName, "updated": True}
 
 
-@T("model-templates", "Get card templates for a note type")
 def model_templates(modelName: str):
     m = col().models.by_name(modelName)
     if not m:
@@ -107,7 +104,6 @@ def create_model(
     return {"modelId": m["id"], "modelName": modelName}
 
 
-@T("model-field-descriptions", "Get field descriptions for a model")
 def model_field_descriptions(modelName: str):
     m = col().models.by_name(modelName)
     if not m:
@@ -115,7 +111,6 @@ def model_field_descriptions(modelName: str):
     return [f.get("description", "") for f in m["flds"]]
 
 
-@T("model-field-fonts", "Get font settings for model fields")
 def model_field_fonts(modelName: str):
     m = col().models.by_name(modelName)
     if not m:
@@ -123,7 +118,6 @@ def model_field_fonts(modelName: str):
     return {f["name"]: {"font": f.get("font", ""), "size": f.get("size", 20)} for f in m["flds"]}
 
 
-@T("model-fields-on-templates", "Get fields used in templates")
 def model_fields_on_templates(modelName: str):
     m = col().models.by_name(modelName)
     if not m:

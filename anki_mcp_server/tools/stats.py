@@ -4,7 +4,6 @@ from datetime import datetime
 from .base import T, ToolError, col
 
 
-@T("get-collection-stats", "Get collection statistics")
 def get_collection_stats():
     return {
         "totalCards": col().card_count(),
@@ -15,7 +14,6 @@ def get_collection_stats():
     }
 
 
-@T("get-num-cards-reviewed-by-day", "Get review counts by day")
 def get_num_cards_reviewed_by_day(num_days: int = 30):
     cutoff = col().sched.day_cutoff
     result = []
@@ -27,7 +25,6 @@ def get_num_cards_reviewed_by_day(num_days: int = 30):
     return {"reviews": result}
 
 
-@T("get-collection-stats-html", "Get collection stats as HTML")
 def get_collection_stats_html(whole_collection: bool = True):
     from aqt import mw
     from aqt.stats import NewDeckStats
@@ -35,7 +32,6 @@ def get_collection_stats_html(whole_collection: bool = True):
     return {"html": stats.report()}
 
 
-@T("get-reviews", "Get review history for cards or deck")
 def get_reviews(card_ids: list[int] = None, deck: str = None, start_id: int = 0, detailed: bool = False):
     if deck:
         deck_obj = col().decks.by_name(deck)
@@ -76,7 +72,6 @@ def insert_reviews(reviews: list[dict]):
     return {"inserted": len(reviews)}
 
 
-@T("get-collection-info", "Get collection metadata and path info")
 def get_collection_info():
     from aqt import mw
     return {
@@ -89,7 +84,6 @@ def get_collection_info():
     }
 
 
-@T("get-empty-cards", "Find notes that generate no cards")
 def get_empty_cards():
     report = col().get_empty_cards()
     return {
@@ -99,14 +93,12 @@ def get_empty_cards():
     }
 
 
-@T("find-duplicates", "Find duplicate notes by field content")
 def find_duplicates(field_name: str, deck_name: str = None):
     query = f'deck:"{deck_name}"' if deck_name else ""
     dupes = col().find_dupes(field_name, query)
     return {"duplicates": [{"value": d[0], "noteIds": list(d[1])} for d in dupes], "count": len(dupes)}
 
 
-@T("check-integrity", "Check and optionally fix database integrity")
 def check_integrity(fix: bool = False):
     if fix:
         result = col().fix_integrity()

@@ -33,7 +33,6 @@ def list_backups():
     return {"backups": backups, "count": len(backups), "backupFolder": folder}
 
 
-@T("export-deck", "Export a deck as .apkg")
 def export_deck(deck_name: str = None, out_path: str = "", include_scheduling: bool = True, include_media: bool = True):
     from anki.exporting import AnkiPackageExporter
     from aqt import mw
@@ -114,7 +113,6 @@ def import_json(json_data: str, deck_name: str):
     return {"imported": True, "deckName": deck_name}
 
 
-@T("export-notes-csv", "Export notes matching query as CSV")
 def export_notes_csv(query: str, out_path: str = ""):
     from aqt import mw
     import csv
@@ -143,7 +141,6 @@ def export_notes_csv(query: str, out_path: str = ""):
     return {"exported": True, "path": out_path, "noteCount": len(notes)}
 
 
-@T("export-for-research", "Export anonymized data for analysis")
 def export_for_research(out_path: str = ""):
     from aqt import mw
     import csv

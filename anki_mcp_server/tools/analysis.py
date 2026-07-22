@@ -121,7 +121,6 @@ def _matching_note_ids(query: str, limit: int, offset: int) -> tuple[list[int], 
     return page, total, offset + limit < total
 
 
-@T("export-notes-rich", "Export notes with fields plus card deck/scheduling/rendering metadata")
 def export_notes_rich(
     query: str,
     limit: int = 100,
@@ -154,7 +153,6 @@ def export_notes_rich(
     }
 
 
-@T("deck-inventory-rich", "Summarize decks/models/fields/cards for notes matching an Anki query")
 def deck_inventory_rich(query: str, limit: int = 50000):
     """Return aggregate inventory for a deck or arbitrary Anki query."""
     note_ids = col().find_notes(query)[:limit]
@@ -197,7 +195,6 @@ def deck_inventory_rich(query: str, limit: int = 50000):
     }
 
 
-@T("analyze-blank-cards", "Find notes whose cards render blank or error-like prompts")
 def analyze_blank_cards(query: str, limit: int = 1000, examples: int = 25):
     """Detect rendered blank-card problems and show populated note fields."""
     note_ids = col().find_notes(query)[:limit]
@@ -241,7 +238,6 @@ def analyze_blank_cards(query: str, limit: int = 1000, examples: int = 25):
     }
 
 
-@T("analyze-duplicates-rich", "Cluster exact and progressive duplicate note candidates")
 def analyze_duplicates_rich(
     query: str,
     prompt_fields: list[str] | None = None,

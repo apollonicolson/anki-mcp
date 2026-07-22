@@ -424,18 +424,60 @@ def _duplicates(request: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# analysis name -> (module, function). Each was its own tool; they differ only in
+# which question they ask, which is what `analysis` now names.
+ANALYSES = {
+    "collection-stats": ("stats", "get_collection_stats"),
+    "collection-stats-html": ("stats", "get_collection_stats_html"),
+    "reviews": ("stats", "get_reviews"),
+    "reviewed-by-day": ("stats", "get_num_cards_reviewed_by_day"),
+    "empty-cards": ("stats", "get_empty_cards"),
+    "integrity": ("stats", "check_integrity"),
+    "deck-stats": ("decks", "get_deck_stats"),
+    "deck-due-tree": ("decks", "get_deck_due_tree"),
+    "due-cards": ("review", "get_due_cards"),
+    "leeches": ("review", "get_leech_cards"),
+    "memory-state": ("review", "get_card_memory_state"),
+    "studied-today": ("review", "get_studied_today"),
+    "retention": ("review", "get_retention_analysis"),
+    "difficulty": ("review", "get_difficulty_distribution"),
+    "forecast": ("review", "get_forecast"),
+    "blank-cards-rich": ("analysis", "analyze_blank_cards"),
+    "duplicates-rich": ("analysis", "analyze_duplicates_rich"),
+    "inventory-rich": ("analysis", "deck_inventory_rich"),
+}
+
+
 def _analyze(request: dict[str, Any]) -> dict[str, Any]:
+    import importlib
+
     analysis = request.get("analysis", "inventory")
     query = request.get("query", "")
     limit = int(request.get("limit", 50000))
     examples = int(request.get("examples", 25))
+
     if analysis == "inventory":
         return _inventory(query, limit)
     if analysis in ("blank-cards", "blank_cards"):
         return _blank_cards(query, limit, examples)
     if analysis == "duplicates":
         return _duplicates(request)
-    raise ToolError(f"Unknown analysis: {analysis}")
+
+    if analysis in ANALYSES:
+        module_name, func_name = ANALYSES[analysis]
+        module = importlib.import_module(f".{module_name}", __package__)
+        func = getattr(module, func_name)
+        # Pass through only what the target actually accepts, so one flat request
+        # shape serves analyses with quite different signatures.
+        import inspect
+
+        accepted = inspect.signature(func).parameters
+        args = {k: v for k, v in request.items()
+                if k in accepted and k not in ("cmd", "analysis")}
+        return func(**args)
+
+    raise ToolError(f"Unknown analysis: {analysis}",
+                    hint=f"one of {sorted(set(ANALYSES) | {'inventory', 'blank-cards', 'duplicates'})}")
 
 
 def _resolve_target_ids(target: dict[str, Any], entity: str) -> list[int]:
@@ -490,6 +532,49 @@ def _apply_set(request: dict[str, Any], ids: list, entity: str) -> dict[str, Any
                                    [int(value)] * len(_card_ids(ids, entity)))
 
 
+# from:"models" detail -> function. Each was its own get-shaped tool asking one
+# question about a notetype definition.
+MODEL_DETAILS = {
+    "fields": ("models", "model_field_names"),
+    "field-descriptions": ("models", "model_field_descriptions"),
+    "field-fonts": ("models", "model_field_fonts"),
+    "fields-on-templates": ("models", "model_fields_on_templates"),
+    "styling": ("models", "model_styling"),
+    "templates": ("models", "model_templates"),
+}
+
+EXPORT_FORMATS = {
+    "apkg": ("backup", "export_deck"),
+    "csv": ("backup", "export_notes_csv"),
+    "research": ("backup", "export_for_research"),
+    "rich": ("analysis", "export_notes_rich"),
+}
+
+DECK_CONFIG_OPS = {
+    "get": ("decks", "get_deck_config"),
+    "save": ("decks", "save_deck_config"),
+    "set": ("decks", "set_deck_config_id"),
+    "clone": ("decks", "clone_deck_config_id"),
+    "delete": ("decks", "delete_deck_config"),
+    "custom-study-defaults": ("review", "get_custom_study_defaults"),
+    "custom-study": ("review", "create_custom_study"),
+}
+
+
+def _call(table: dict, key: str, request: dict[str, Any], what: str):
+    """Dispatch to a delegated function, passing only the args it accepts."""
+    import importlib
+    import inspect
+
+    if key not in table:
+        raise ToolError(f"Unknown {what}: {key}", hint=f"one of {sorted(table)}")
+    module_name, func_name = table[key]
+    func = getattr(importlib.import_module(f".{module_name}", __package__), func_name)
+    accepted = inspect.signature(func).parameters
+    args = {k: v for k, v in request.items() if k in accepted}
+    return func(**args)
+
+
 ALTER_OPS = {
     "field-add": ("models", "model_field_add"),
     "field-remove": ("models", "model_field_remove"),
@@ -502,6 +587,10 @@ ALTER_OPS = {
     "templates-set": ("models", "update_model_templates"),
     "styling-set": ("models", "update_model_styling"),
     "create": ("models", "create_model"),
+    "deck-config-save": ("decks", "save_deck_config"),
+    "deck-config-set": ("decks", "set_deck_config_id"),
+    "deck-config-clone": ("decks", "clone_deck_config_id"),
+    "deck-config-delete": ("decks", "delete_deck_config"),
 }
 
 
@@ -664,10 +753,15 @@ def anki(request: dict[str, Any]) -> dict[str, Any]:
                               limit=int(request.get("limit", 100)),
                               include_stats=bool(request.get("include_stats")))
         if source == "models":
+            detail = request.get("detail")
+            if detail:
+                return _call(MODEL_DETAILS, detail, request, "model detail")
             from .models import list_models
             return list_models(pattern=request.get("pattern"),
                                limit=int(request.get("limit", 100)),
                                include_fields=bool(request.get("include_fields")))
+        if source == "deck-config":
+            return _call(DECK_CONFIG_OPS, request.get("op", "get"), request, "deck-config op")
         if source == "tags":
             from .tags import list_tags
             return list_tags(pattern=request.get("pattern"), limit=request.get("limit"))
@@ -700,13 +794,16 @@ def anki(request: dict[str, Any]) -> dict[str, Any]:
         from .speculate import speculate
         return speculate(request.get("from", "now"), request.get("ops") or [],
                          request.get("label", "spec"))
+    if cmd == "export":
+        return _call(EXPORT_FORMATS, request.get("format", "csv"), request, "export format")
     if cmd == "transact":
         return _transact(request)
     if cmd == "alter":
         return _alter(request)
     raise ToolError(
         f"Unknown cmd: {cmd}",
-        hint="query, inspect, analyze, diff, as-of, history, blame, speculate, mutate",
+        hint=("query, inspect, analyze, diff, as-of, history, blame, "
+              "speculate, transact, alter, export"),
     )
 
 

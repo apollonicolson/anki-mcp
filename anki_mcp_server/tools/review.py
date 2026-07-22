@@ -2,7 +2,6 @@
 from .base import T, ToolError, col
 
 
-@T("get-due-cards", "Get cards due for review")
 def get_due_cards(deck_name: str = None, limit: int = 10):
     query = "is:due"
     if deck_name:
@@ -36,7 +35,6 @@ def rate_card(card_id: int, rating: int):
     return {"rated": card_id, "rating": rating}
 
 
-@T("get-leech-cards", "Find cards marked as leeches or frequently failed")
 def get_leech_cards(deck_name: str = None, threshold: int = 8):
     query = "is:review"
     if deck_name:
@@ -58,7 +56,6 @@ def get_leech_cards(deck_name: str = None, threshold: int = 8):
     return {"leeches": sorted(leeches, key=lambda x: -x["lapses"]), "count": len(leeches)}
 
 
-@T("get-card-memory-state", "Get FSRS stability, difficulty, retrievability for cards")
 def get_card_memory_state(cards: list[int]):
     result = []
     for cid in cards:
@@ -76,7 +73,6 @@ def get_card_memory_state(cards: list[int]):
     return {"cards": result}
 
 
-@T("get-studied-today", "Get today's study session summary")
 def get_studied_today():
     studied = col().studied_today()
     cutoff = col().sched.day_cutoff * 1000
@@ -84,16 +80,18 @@ def get_studied_today():
     reviews_today = col().db.scalar("select count() from revlog where id > ?", cutoff)
     time_today = col().db.scalar("select sum(time) from revlog where id > ?", cutoff) or 0
 
+    # col.studied_today() returns a localised summary *string*, so indexing it
+    # yielded single characters ("S", "t") rather than a count and a message.
+    # The real numbers come from revlog, which this already queries.
     return {
-        "cardsStudied": studied[0] if studied else 0,
+        "cardsStudied": reviews_today,
         "timeSpentMs": time_today,
         "timeSpentMinutes": round(time_today / 60000, 1),
         "reviewCount": reviews_today,
-        "message": studied[1] if studied and len(studied) > 1 else "",
+        "summary": studied if isinstance(studied, str) else str(studied),
     }
 
 
-@T("get-retention-analysis", "Analyze success rate by interval length")
 def get_retention_analysis(deck_name: str = None):
     query = "is:review"
     if deck_name:
@@ -135,7 +133,6 @@ def get_retention_analysis(deck_name: str = None):
     return {"retention": result}
 
 
-@T("get-difficulty-distribution", "Get cards grouped by difficulty level")
 def get_difficulty_distribution(deck_name: str = None):
     query = "is:review"
     if deck_name:
@@ -163,7 +160,6 @@ def get_difficulty_distribution(deck_name: str = None):
     }
 
 
-@T("get-forecast", "Predict cards due in coming days")
 def get_forecast(days: int = 30):
     today = col().sched.today
     forecast = []
@@ -176,7 +172,6 @@ def get_forecast(days: int = 30):
     return {"forecast": forecast, "days": days}
 
 
-@T("create-custom-study", "Create a custom study session", write=True)
 def create_custom_study(deck_name: str, mode: str, limit: int = 100):
     deck = col().decks.by_name(deck_name)
     if not deck:
@@ -193,7 +188,6 @@ def create_custom_study(deck_name: str, mode: str, limit: int = 100):
     return {"created": True, "mode": mode, "deck": deck_name, "limit": limit}
 
 
-@T("get-custom-study-defaults", "Get available options for custom study")
 def get_custom_study_defaults(deck_name: str):
     deck = col().decks.by_name(deck_name)
     if not deck:
