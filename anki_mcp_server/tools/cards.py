@@ -2,7 +2,6 @@
 from .base import T, ToolError, col
 
 
-@T("find-cards", "Search for cards using Anki query syntax")
 def find_cards(query: str, limit: int = 100, offset: int = 0):
     """Search for cards with pagination."""
     all_cards = col().find_cards(query)
@@ -11,7 +10,6 @@ def find_cards(query: str, limit: int = 100, offset: int = 0):
     return {"cardIds": cards, "count": len(cards), "total": total, "hasMore": offset + limit < total, "offset": offset, "limit": limit}
 
 
-@T("get-cards-info", "Get detailed info about cards")
 def get_cards_info(cards: list[int]):
     result = []
     for cid in cards:
@@ -30,14 +28,12 @@ def get_cards_info(cards: list[int]):
     return {"cards": result}
 
 
-@T("get-notes-for-cards", "Get note IDs for cards")
 def get_notes_for_cards(cards: list[int]):
     mapping = {str(cid): col().get_card(cid).nid for cid in cards}
     unique_notes = list(set(mapping.values()))
     return {"mapping": mapping, "uniqueNoteIds": unique_notes, "cardCount": len(cards), "noteCount": len(unique_notes)}
 
 
-@T("get-ease-factors", "Get ease factors for cards")
 def get_ease_factors(cards: list[int]):
     return {"easeFactors": [col().get_card(c).factor for c in cards]}
 
@@ -60,7 +56,6 @@ def set_cards_suspended(cards: list[int], suspended: bool = True):
     return {"cards": len(cards), "suspended": suspended}
 
 
-@T("are-suspended", "Check if cards are suspended")
 def are_suspended(cards: list[int]):
     return {str(cid): col().get_card(cid).queue == -1 for cid in cards}
 
@@ -102,12 +97,10 @@ def answer_cards(answers: list[dict]):
     return {"answered": len(answers)}
 
 
-@T("are-due", "Check if cards are due")
 def are_due(cards: list[int]):
     return {str(cid): col().get_card(cid).queue == 0 for cid in cards}
 
 
-@T("get-intervals", "Get intervals for cards")
 def get_intervals(cards: list[int], complete: bool = False):
     result = []
     for cid in cards:
@@ -119,7 +112,6 @@ def get_intervals(cards: list[int], complete: bool = False):
     return {"intervals": result}
 
 
-@T("get-cards-mod-time", "Get modification times for cards")
 def get_cards_mod_time(cards: list[int]):
     return {str(cid): col().get_card(cid).mod for cid in cards}
 

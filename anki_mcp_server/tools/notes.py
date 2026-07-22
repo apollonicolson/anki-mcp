@@ -48,7 +48,6 @@ def _note_row(note_id: int) -> dict:
     }
 
 
-@T("find-notes", "Search for notes using Anki query syntax")
 def find_notes(query: str, limit: int = 100, offset: int = 0):
     """Search for notes with pagination."""
     all_notes = col().find_notes(query)
@@ -57,7 +56,6 @@ def find_notes(query: str, limit: int = 100, offset: int = 0):
     return {"noteIds": notes, "count": len(notes), "total": total, "hasMore": offset + limit < total, "offset": offset, "limit": limit}
 
 
-@T("get-notes-info", "Get detailed info about notes")
 def get_notes_info(notes: list[int]):
     result = []
     for nid in notes:
@@ -68,7 +66,6 @@ def get_notes_info(notes: list[int]):
     return {"notes": result}
 
 
-@T("add-note", "Add a new note to Anki", write=True)
 def add_note(
     deckName: str,
     modelName: str,
@@ -98,7 +95,6 @@ def add_note(
     return {"noteId": note_id, "deckName": deckName, "modelName": modelName}
 
 
-@T("add-notes", "Add multiple notes at once", write=True)
 def add_notes(notes: list[dict]) -> dict:
     results = []
     for n in notes:
@@ -146,7 +142,6 @@ def can_add_notes(notes: list[dict], include_errors: bool = False):
     return {"results": results, "count": len(results)}
 
 
-@T("upsert-notes", "Add or update notes matched by a stable key field", write=True)
 def upsert_notes(
     notes: list[dict],
     key_field: str,
@@ -246,7 +241,6 @@ def upsert_notes(
     }
 
 
-@T("update-note", "Update note fields and tags", write=True)
 def update_note(note: dict):
     nid = note.get("id")
     n = col().get_note(nid)
@@ -272,7 +266,6 @@ def update_note_model(note_id: int, model_name: str, field_map: dict = None, car
     return {"noteId": note_id, "newModel": model_name}
 
 
-@T("get-note-tags", "Get tags for a specific note")
 def get_note_tags(note_id: int):
     n = col().get_note(note_id)
     if not n:
@@ -280,6 +273,5 @@ def get_note_tags(note_id: int):
     return {"noteId": note_id, "tags": n.tags}
 
 
-@T("get-notes-mod-time", "Get modification times for notes")
 def get_notes_mod_time(notes: list[int]):
     return {str(nid): col().get_note(nid).mod for nid in notes}

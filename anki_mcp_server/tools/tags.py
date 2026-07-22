@@ -2,7 +2,6 @@
 from .base import T, col
 
 
-@T("list-tags", "List all tags in collection")
 def list_tags(pattern: str = None, limit: int = None):
     """Get tags with optional filtering."""
     import fnmatch

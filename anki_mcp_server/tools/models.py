@@ -4,7 +4,6 @@ from .base import T, ToolError, col
 import re
 
 
-@T("list-models", "List note types with optional filtering")
 def list_models(
     pattern: str = None,
     ids: list[int] = None,

@@ -212,7 +212,17 @@ def _query_notes(request: dict[str, Any]) -> dict[str, Any]:
     where = request.get("where")
     select = request.get("select")
 
-    ids = col().find_notes(query)
+    ids = _ids_for(request, "notes")
+    # A select naming only raw attributes uses the projection table directly;
+    # the older structural select (fields/cards/deck) keeps its own path.
+    if select and all(isinstance(x, str) and x in NOTE_ATTRS for x in select) and not where:
+        page = ids[offset : offset + limit]
+        return {
+            "query": query, "from": "notes", "select": select,
+            "rows": [_project(col().get_note(n), select, NOTE_ATTRS, "note") for n in page],
+            "count": len(page), "total": len(ids), "offset": offset, "limit": limit,
+            "hasMore": offset + limit < len(ids),
+        }
     rows = []
     matched_total = len(ids)
     scanned = len(ids)
@@ -246,17 +256,82 @@ def _query_notes(request: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# Attribute -> how to read it off a card. Each of these used to be its own
+# get-shaped tool; they differ only in which column they project.
+CARD_ATTRS = {
+    "id": lambda c: c.id,
+    "nid": lambda c: c.nid,
+    "note": lambda c: c.nid,
+    "deck": lambda c: col().decks.name(c.did),
+    "did": lambda c: c.did,
+    "ord": lambda c: c.ord,
+    "type": lambda c: c.type,
+    "queue": lambda c: c.queue,
+    "due": lambda c: c.due,
+    "ivl": lambda c: c.ivl,
+    "interval": lambda c: c.ivl,
+    "ease": lambda c: c.factor,
+    "factor": lambda c: c.factor,
+    "reps": lambda c: c.reps,
+    "lapses": lambda c: c.lapses,
+    "mod": lambda c: c.mod,
+    "flags": lambda c: c.flags,
+    "suspended": lambda c: c.queue == -1,
+    "buried": lambda c: c.queue in (-2, -3),
+    "due?": lambda c: c.queue == 2 and c.due <= col().sched.today,
+    "question": lambda c: c.question(),
+    "answer": lambda c: c.answer(),
+}
+
+NOTE_ATTRS = {
+    "id": lambda n: n.id,
+    "mid": lambda n: n.note_type()["id"],
+    "model": lambda n: n.note_type()["name"],
+    "tags": lambda n: list(n.tags),
+    "fields": lambda n: _fields(n),
+    "mod": lambda n: n.mod,
+    "usn": lambda n: n.usn,
+    "cards": lambda n: [c.id for c in n.cards()],
+}
+
+
+def _project(entity_obj, select: list, table: dict, what: str) -> dict:
+    row = {}
+    for attr in select:
+        reader = table.get(attr)
+        if reader is None:
+            raise ToolError(f"Unknown {what} attribute: {attr}",
+                            hint=f"one of {sorted(table)}")
+        row[attr] = reader(entity_obj)
+    return row
+
+
+def _ids_for(request: dict[str, Any], entity: str) -> list:
+    """Explicit ids win over a search; either is a valid way to name a target."""
+    ids = request.get("ids")
+    if ids:
+        return [int(i) for i in ids]
+    finder = col().find_cards if entity == "cards" else col().find_notes
+    return finder(request.get("query", ""))
+
+
 def _query_cards(request: dict[str, Any]) -> dict[str, Any]:
-    query = request.get("query", "")
     limit = int(request.get("limit", 100))
     offset = int(request.get("offset", 0))
     rendered = bool(request.get("rendered") or "rendered" in request.get("include", []))
-    ids = col().find_cards(query)
+    select = request.get("select")
+
+    ids = _ids_for(request, "cards")
     page = ids[offset : offset + limit]
+    if select:
+        rows = [_project(col().get_card(cid), select, CARD_ATTRS, "card") for cid in page]
+    else:
+        rows = [_card(card_id, rendered=rendered) for card_id in page]
     return {
-        "query": query,
+        "query": request.get("query", ""),
         "from": "cards",
-        "rows": [_card(card_id, rendered=rendered) for card_id in page],
+        "select": select,
+        "rows": rows,
         "count": len(page),
         "total": len(ids),
         "offset": offset,
@@ -496,7 +571,8 @@ def _resolve_target_ids(target: dict[str, Any], entity: str) -> list[int]:
 
 
 SET_ATTRS = ("flag", "suspended", "buried", "due", "ease", "deck", "notetype")
-TRANSACT_OPS = ("set", "tag", "field", "delete", "forget", "answer")
+TRANSACT_OPS = ("set", "tag", "field", "delete", "forget", "answer",
+                "add", "update", "upsert")
 
 
 def _card_ids(ids: list, entity: str) -> list:
@@ -549,6 +625,8 @@ EXPORT_FORMATS = {
     "research": ("backup", "export_for_research"),
     "rich": ("analysis", "export_notes_rich"),
 }
+
+UPSERT = {"upsert": ("notes", "upsert_notes")}
 
 DECK_CONFIG_OPS = {
     "get": ("decks", "get_deck_config"),
@@ -638,7 +716,29 @@ def _transact(request: dict[str, Any]) -> dict[str, Any]:
     entity = target.get("entity", "notes")
     dry_run = request.get("dry_run", True)
     if op not in TRANSACT_OPS:
-        raise ToolError(f"Unknown mutation op: {op}", hint=f"one of {TRANSACT_OPS}")
+        raise ToolError(f"Unknown transact op: {op}", hint=f"one of {TRANSACT_OPS}")
+
+    # Creation ops name their own content rather than a target to resolve.
+    if op in ("add", "update", "upsert"):
+        from . import notes as _notes_mod
+
+        if dry_run:
+            return {"cmd": "transact", "op": op, "dry_run": True,
+                    "hint": "re-run with dry_run=false to apply"}
+        if op == "add":
+            batch = request.get("notes")
+            if batch:
+                return {"cmd": "transact", "op": op, "dry_run": False,
+                        "result": _notes_mod.add_notes(batch)}
+            return {"cmd": "transact", "op": op, "dry_run": False,
+                    "result": _notes_mod.add_note(
+                        deckName=request["deckName"], modelName=request["modelName"],
+                        fields=request["fields"], tags=request.get("tags"))}
+        if op == "update":
+            return {"cmd": "transact", "op": op, "dry_run": False,
+                    "result": _notes_mod.update_note(request["note"])}
+        return {"cmd": "transact", "op": op, "dry_run": False,
+                "result": _call(UPSERT, "upsert", request, "upsert")}
     ids = _resolve_target_ids(target, entity)
     limit = request.get("limit")
     if limit is not None:

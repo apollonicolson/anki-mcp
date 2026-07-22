@@ -9,7 +9,6 @@ def _sparse(d: dict) -> dict:
             for k, v in d.items() if v or v is False}
 
 
-@T("list-decks", "List decks with optional filtering and statistics")
 def list_decks(
     include_stats: bool = False,
     pattern: str = None,
@@ -151,7 +150,6 @@ def delete_deck_config(config_id: int):
     return {"removed": config_id}
 
 
-@T("get-decks-for-cards", "Get decks containing specific cards")
 def get_decks_for_cards(cards: list[int]):
     deck_map = {}
     for cid in cards:
