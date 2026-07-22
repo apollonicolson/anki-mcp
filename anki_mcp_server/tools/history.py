@@ -356,20 +356,42 @@ def journal_revert(txid: str, confirm: bool = False):
         raise ToolError(f"No journal entry with txid {txid}", hint="Use journal-tail")
     entry = matches[0]
     pre = entry.get("pre_image") or {}
+    schema = entry.get("schema") or {}
+
+    # Schema transactions carry a notetype pre-image instead of note rows.
+    if schema:
+        if not schema.get("revertible"):
+            raise ToolError(
+                f"Entry {txid} is a structural schema change ({schema.get('op')})",
+                hint=f"{schema.get('reason')}; use snapshot-restore instead",
+            )
+        collection = col()
+        if not confirm:
+            return {"txid": txid, "tool": entry.get("tool"), "ts": entry.get("ts"),
+                    "would_restore_notetypes": [m["name"] for m in schema.get("models", [])],
+                    "confirm": False, "hint": "re-run with confirm=true to apply"}
+        for model in schema.get("models", []):
+            collection.models.update_dict(model)
+        return {"txid": txid, "tool": entry.get("tool"),
+                "notetypes_restored": [m["name"] for m in schema.get("models", [])],
+                "confirm": True}
+
     if pre.get("mode") != "notes" or not pre.get("notes"):
         raise ToolError(
             f"Entry {txid} has no note pre-image (mode={pre.get('mode')})",
             hint="Not revertible from the journal; use snapshot-restore-plan",
         )
 
-    plan, skipped = [], []
+    plan, skipped, recreate = [], [], []
     collection = col()
     pre_note_ids = [r["id"] for r in pre.get("notes", [])]
     for row in pre["notes"]:
         try:
             note = collection.get_note(row["id"])
         except Exception:
-            skipped.append({"id": row["id"], "reason": "note no longer exists"})
+            # Deleted. Content is recoverable; the original id and scheduling are
+            # not - a recreated note gets new ids and new cards.
+            recreate.append(row)
             continue
         old_fields = row["flds"].split("\x1f")
         if len(old_fields) != len(note.fields):
@@ -383,7 +405,10 @@ def journal_revert(txid: str, confirm: bool = False):
         return {
             "txid": txid, "tool": entry.get("tool"), "ts": entry.get("ts"),
             "would_revert": len(plan), "would_restore_cards": len(pre.get("cards", [])),
-            "skipped": skipped, "confirm": False,
+            "would_recreate_deleted": len(recreate), "skipped": skipped, "confirm": False,
+            "recreate_caveat": ("deleted notes come back with new ids and fresh scheduling; "
+                                "snapshot-restore is the only exact recovery")
+                               if recreate else None,
             "hint": "re-run with confirm=true to apply",
         }
 
@@ -396,6 +421,18 @@ def journal_revert(txid: str, confirm: bool = False):
         note.fields = old_fields
         note.tags = old_tags.strip().split()
         collection.update_note(note)
+
+    recreated = []
+    for row in recreate:
+        model = collection.models.get(row["mid"])
+        if model is None:
+            skipped.append({"id": row["id"], "reason": "notetype no longer exists"})
+            continue
+        note = collection.new_note(model)
+        note.fields = row["flds"].split("\x1f")
+        note.tags = row["tags"].strip().split()
+        collection.add_note(note, collection.decks.selected())
+        recreated.append({"old_id": row["id"], "new_id": note.id})
 
     # Card attributes: flag, suspend, bury, due, ease and deck live here, so a
     # note-only revert would silently leave them changed.
@@ -424,4 +461,7 @@ def journal_revert(txid: str, confirm: bool = False):
             cards_restored += 1
 
     return {"txid": txid, "tool": entry.get("tool"), "reverted": len(plan),
-            "cards_restored": cards_restored, "skipped": skipped, "confirm": True}
+            "cards_restored": cards_restored, "recreated": recreated,
+            "skipped": skipped, "confirm": True,
+            "note": ("recreated notes have new ids and fresh scheduling"
+                     if recreated else None)}

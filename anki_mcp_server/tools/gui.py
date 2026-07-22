@@ -3,7 +3,6 @@ import os
 from .base import T, ToolError, col
 
 
-@T("gui-browse", "Open card browser with search", category="gui")
 def gui_browse(query: str = ""):
     from aqt import mw
     from aqt.browser import Browser
@@ -17,7 +16,6 @@ def gui_browse(query: str = ""):
     return {"opened": True, "query": query}
 
 
-@T("gui-add-cards", "Open Add Cards dialog", category="gui", require_col=False)
 def gui_add_cards(deck_name: str = None, model_name: str = None, fields: dict = None):
     from aqt import mw
     mw.onAddCard()
@@ -31,7 +29,6 @@ def gui_add_cards(deck_name: str = None, model_name: str = None, fields: dict = 
     return {"opened": True}
 
 
-@T("gui-current-card", "Get info about card in reviewer", category="gui")
 def gui_current_card():
     from aqt import mw
     if not mw.reviewer or not mw.reviewer.card:
@@ -43,7 +40,6 @@ def gui_current_card():
     }
 
 
-@T("gui-show-answer", "Show answer in reviewer", category="gui")
 def gui_show_answer():
     from aqt import mw
     if mw.reviewer and mw.reviewer.card:
@@ -52,7 +48,6 @@ def gui_show_answer():
     return {"shown": False, "error": "Not in review"}
 
 
-@T("gui-show-question", "Show question in reviewer", category="gui")
 def gui_show_question():
     from aqt import mw
     if mw.reviewer and mw.reviewer.card:
@@ -61,14 +56,12 @@ def gui_show_question():
     return {"shown": False, "error": "Not in review"}
 
 
-@T("gui-deck-browser", "Open deck browser", category="gui")
 def gui_deck_browser():
     from aqt import mw
     mw.moveToState("deckBrowser")
     return {"opened": True}
 
 
-@T("gui-undo", "Undo last action", category="gui")
 def gui_undo():
     from aqt import mw
     if col().undo_status().undo:
@@ -77,7 +70,6 @@ def gui_undo():
     return {"undone": False, "error": "Nothing to undo"}
 
 
-@T("gui-edit-note", "Open note editor", category="gui")
 def gui_edit_note(note_id: int):
     from aqt import mw
     mw.onBrowse()
@@ -87,7 +79,6 @@ def gui_edit_note(note_id: int):
     return {"opened": True, "noteId": note_id}
 
 
-@T("gui-select-card", "Select card in browser", category="gui")
 def gui_select_card(card_id: int):
     from aqt import mw
     from aqt.browser import Browser
@@ -98,7 +89,6 @@ def gui_select_card(card_id: int):
     return {"selected": False, "error": "Browser not open"}
 
 
-@T("gui-selected-notes", "Get selected notes in browser", category="gui")
 def gui_selected_notes():
     from aqt import mw
     from aqt.browser import Browser
@@ -108,7 +98,6 @@ def gui_selected_notes():
     return {"notes": [], "error": "Browser not open"}
 
 
-@T("gui-start-card-timer", "Start timer for current card", category="gui")
 def gui_start_card_timer():
     from aqt import mw
     if mw.reviewer and mw.reviewer.card:
@@ -117,7 +106,6 @@ def gui_start_card_timer():
     return {"started": False, "error": "Not in review"}
 
 
-@T("gui-answer-card", "Answer current card in reviewer", category="gui", write=True)
 def gui_answer_card(ease: int):
     from aqt import mw
     if not 1 <= ease <= 4:
@@ -128,7 +116,6 @@ def gui_answer_card(ease: int):
     return {"answered": False, "error": "Not in review"}
 
 
-@T("gui-deck-overview", "Open deck overview", category="gui")
 def gui_deck_overview(deck_name: str):
     from aqt import mw
     deck = col().decks.by_name(deck_name)
@@ -139,7 +126,6 @@ def gui_deck_overview(deck_name: str):
     return {"opened": True, "deckName": deck_name}
 
 
-@T("gui-deck-review", "Start reviewing a deck", category="gui")
 def gui_deck_review(deck_name: str):
     from aqt import mw
     deck = col().decks.by_name(deck_name)
@@ -150,7 +136,6 @@ def gui_deck_review(deck_name: str):
     return {"started": True, "deckName": deck_name}
 
 
-@T("gui-import-file", "Open import dialog for a file", category="gui")
 def gui_import_file(path: str):
     from aqt import mw
     if not os.path.exists(path):
@@ -159,24 +144,60 @@ def gui_import_file(path: str):
     return {"importing": path}
 
 
-@T("gui-exit-anki", "Close Anki", category="gui", require_col=False)
 def gui_exit_anki():
     from aqt import mw
     mw.close()
     return {"closing": True}
 
 
-@T("gui-check-database", "Check database integrity", category="gui")
 def gui_check_database():
     from aqt import mw
     result = mw.col.fix_integrity()
     return {"result": result}
 
 
-@T("gui-play-audio", "Play audio for current card", category="gui")
 def gui_play_audio(side: str = "question"):
     from aqt import mw
     if mw.reviewer and mw.reviewer.card:
         mw.reviewer.playAudio("answer" if side == "answer" else "question")
         return {"playing": True, "side": side}
     return {"playing": False, "error": "Not in review"}
+
+
+# One tool, one enum. These are UI actions, not data operations - they cannot be
+# dry-run or reverted, so they keep an explicit verb and stay out of the journal.
+GUI_ACTIONS = {
+    "browse": gui_browse,
+    "add-cards": gui_add_cards,
+    "current-card": gui_current_card,
+    "show-answer": gui_show_answer,
+    "show-question": gui_show_question,
+    "deck-browser": gui_deck_browser,
+    "undo": gui_undo,
+    "edit-note": gui_edit_note,
+    "select-card": gui_select_card,
+    "selected-notes": gui_selected_notes,
+    "start-card-timer": gui_start_card_timer,
+    "answer-card": gui_answer_card,
+    "deck-overview": gui_deck_overview,
+    "deck-review": gui_deck_review,
+    "import-file": gui_import_file,
+    "exit-anki": gui_exit_anki,
+    "check-database": gui_check_database,
+    "play-audio": gui_play_audio,
+}
+
+
+@T("gui", "Drive Anki's user interface: browse, review, dialogs, undo",
+   category="gui", require_col=False)
+def gui(do: str, args: dict = None):
+    """Dispatch a UI action. `do` names the action, `args` are its parameters.
+
+    Nested args rather than **kwargs: the MCP schema is generated from this
+    signature, and a bare **kwargs produces no usable parameter description.
+    """
+    action = GUI_ACTIONS.get(do)
+    if action is None:
+        raise ToolError(f"Unknown gui action: {do}",
+                        hint=f"one of {sorted(GUI_ACTIONS)}")
+    return action(**(args or {}))

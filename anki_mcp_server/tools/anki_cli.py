@@ -523,15 +523,24 @@ def _alter(request: dict[str, Any]) -> dict[str, Any]:
                 "warning": "schema changes force a full AnkiWeb re-upload",
                 "hint": "re-run with dry_run=false; a snapshot is taken automatically"}
 
+    from . import _journal
     from .history import snapshot_create
 
     snapshot = snapshot_create(label=f"pre-alter-{op}")
+
+    # Capture the notetype definitions before the change. Definition-only ops can
+    # then be reverted from the journal; structural ones still need the snapshot.
+    names = [args.get(k) for k in ("modelName", "model_name", "name") if args.get(k)]
+    _journal.declare_schema(col(), names, op)
+
     module_name, func_name = ALTER_OPS[op]
     module = importlib.import_module(f".{module_name}", __package__)
     result = getattr(module, func_name)(**args)
     return {"cmd": "alter", "op": op, "dry_run": False, "snapshot": snapshot["snapshot"],
             "result": result,
-            "note": "not journal-revertible; recover via snapshot-restore if needed"}
+            "revertible": op in _journal.DEFINITION_ONLY_OPS,
+            "note": ("revertible from the journal" if op in _journal.DEFINITION_ONLY_OPS
+                     else "structural: recover via snapshot-restore")}
 
 
 def _transact(request: dict[str, Any]) -> dict[str, Any]:

@@ -52,6 +52,42 @@ def take_declared() -> dict:
     return declared
 
 
+# Schema ops that only rewrite a notetype definition. Everything else also rewrites
+# note field data or regenerates cards, and cannot be undone from the model dict.
+DEFINITION_ONLY_OPS = frozenset({
+    "styling-set", "templates-set", "template-rename", "field-rename",
+})
+
+
+def declare_schema(col, model_names, op: str) -> None:
+    """Capture notetype definitions before a schema change.
+
+    Definition-only ops are revertible by writing the stored dict back. Structural
+    ops (field add/remove/reposition, template add/remove) also change note.flds or
+    regenerate cards, so the dict alone is not enough - those stay snapshot-gated.
+    """
+    import copy
+
+    models = []
+    for name in [n for n in model_names if n]:
+        model = col.models.by_name(name)
+        if model is not None:
+            # by_name hands back Anki's cached dict, not a copy. Storing the
+            # reference means the "pre-image" mutates when the change is applied,
+            # and the revert writes the post state back over itself.
+            models.append(copy.deepcopy(model))
+    _declared.clear()
+    _declared.update({
+        "schema": {
+            "op": op,
+            "revertible": op in DEFINITION_ONLY_OPS,
+            "models": models,
+            "reason": None if op in DEFINITION_ONLY_OPS else
+                      "structural change also rewrites note fields or regenerates cards",
+        }
+    })
+
+
 def extract_note_ids(arguments: dict, _depth: int = 0) -> list:
     """Best-effort note ids from tool arguments. Empty list means 'unknown'."""
     found = []
@@ -177,19 +213,29 @@ def take_read() -> bool:
     return was_read
 
 
-def history(col_path: str, note_id: int, limit: int = 200) -> list:
-    """Every recorded fact about one note, oldest first.
+# entity -> facts, rebuilt when any journal shard changes. Without it every
+# history() call rescans the whole log.
+_index_cache: dict = {"stamp": None, "entities": {}}
 
-    Datoms are stored per transaction; this is the entity-indexed view over them.
-    """
-    facts = []
-    # read_entries is newest-first; walk it backwards for oldest-first while
-    # preserving each transaction's own datom order (retract before assert).
-    for entry in reversed(read_entries(col_path, limit=100000)):
+
+def _journal_stamp(col_path: str):
+    d = journal_dir(col_path)
+    return tuple(sorted(
+        (f, os.path.getmtime(os.path.join(d, f)), os.path.getsize(os.path.join(d, f)))
+        for f in os.listdir(d) if f.endswith(".jsonl")
+    ))
+
+
+def _entity_index(col_path: str) -> dict:
+    stamp = _journal_stamp(col_path)
+    if _index_cache["stamp"] == stamp:
+        return _index_cache["entities"]
+
+    entities: dict = {}
+    # Oldest-first, preserving each transaction's own datom order (retract, assert).
+    for entry in reversed(read_entries(col_path, limit=10**9)):
         for e, attribute, value, op in entry.get("datoms") or []:
-            if int(e) != int(note_id):
-                continue
-            facts.append({
+            entities.setdefault(int(e), []).append({
                 "txid": str(entry.get("txid")),
                 "ts": entry.get("ts"),
                 "tool": entry.get("tool"),
@@ -197,7 +243,18 @@ def history(col_path: str, note_id: int, limit: int = 200) -> list:
                 "value": value,
                 "op": op,
             })
-    return facts[-limit:]
+    _index_cache.update({"stamp": stamp, "entities": entities})
+    return entities
+
+
+def history(col_path: str, note_id: int, limit: int = 200) -> list:
+    """Every recorded fact about one entity (note or card), oldest first."""
+    return _entity_index(col_path).get(int(note_id), [])[-limit:]
+
+
+def schema_of(entry: dict) -> dict:
+    """The notetype pre-image recorded for a schema transaction, if any."""
+    return (entry.get("schema") or {})
 
 
 def blame(col_path: str, note_id: int) -> dict:
@@ -218,7 +275,8 @@ def record(entry: dict, col_path: str) -> None:
         logger.warning(f"journal write failed (continuing): {e}")
 
 
-def read_entries(col_path: str, limit: int = 50, tool: str = None, txid: int = None):
+def read_entries(col_path: str, limit: int = 50, tool: str = None, txid: int = None,
+                 since: str = None, until: str = None):
     """Most-recent-first entries across all journal shards."""
     d = journal_dir(col_path)
     shards = sorted(
@@ -243,6 +301,11 @@ def read_entries(col_path: str, limit: int = 50, tool: str = None, txid: int = N
                 continue
             # Compare as strings: older entries may carry an integer txid.
             if txid is not None and str(entry.get("txid")) != str(txid):
+                continue
+            # ISO-8601 timestamps sort lexicographically within one offset.
+            if since and str(entry.get("ts", "")) < since:
+                continue
+            if until and str(entry.get("ts", "")) > until:
                 continue
             out.append(entry)
             if len(out) >= limit:
