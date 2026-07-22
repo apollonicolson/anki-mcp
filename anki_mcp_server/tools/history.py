@@ -222,15 +222,32 @@ def snapshot_restore_plan(snapshot: str, include_media: bool = False):
     }
 
 
-@T("snapshot-restore", "Restore a snapshot in-process by closing and reopening the collection",
+@T("snapshot-restore", "DISABLED - use snapshot-restore-plan; see the docstring",
    write=True)
 def snapshot_restore(snapshot: str, confirm: bool = False):
-    """Swap a snapshot in while Anki stays running.
+    """Disabled: this corrupted a live collection on 2026-07-23.
 
-    Mirrors Anki's own full-sync download path: close_for_full_sync() -> replace the
-    file -> reopen(after_full_sync=True). Media is out of scope here; use
-    snapshot-restore-plan for a media restore with Anki closed.
+    close_for_full_sync() does not release SQLite's shared-memory mapping, so after
+    the file is swapped and reopen() runs, Anki rebuilds a -shm describing the OLD
+    file's page layout. SQLite compares it against the new file and reports
+    "database disk image is malformed". The data is fine; the index beside it is not.
+
+    It passed testing only because the test restored a snapshot whose content was
+    identical to the live collection - with identical pages a stale -shm is still
+    valid, so the failure mode was designed out of the test.
+
+    snapshot-restore-plan does this correctly: it clears -wal/-shm with Anki closed,
+    where nothing can recreate them.
     """
+    raise ToolError(
+        "snapshot-restore is disabled: it corrupts the live collection's -shm index",
+        hint="use snapshot-restore-plan and run the generated script with Anki closed",
+        snapshot=snapshot,
+    )
+
+
+def _snapshot_restore_unsafe(snapshot: str, confirm: bool = False):
+    """Retained for reference only. Do not register this."""
     src = os.path.join(_snap_root(), snapshot)
     src_db = os.path.join(src, "collection.anki2")
     if not os.path.isfile(src_db):
