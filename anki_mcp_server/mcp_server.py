@@ -29,6 +29,11 @@ from .config import Config
 from .queue_bridge import QueueBridge, ToolRequest
 from .primitives import register_all_tools, register_all_resources, register_all_prompts
 
+# Live FastMCP instance and main-thread bridge, set when the server starts.
+# reload-tools uses these to re-advertise tools in place.
+_ACTIVE_MCP = None
+_ACTIVE_CALL_MAIN_THREAD = None
+
 
 class McpServer:
     """MCP server running in background thread.
@@ -165,6 +170,11 @@ class McpServer:
             enable_dns_rebinding_protection=False
         )
         mcp = FastMCP("anki-mcp", streamable_http_path="/", transport_security=security_settings)
+
+        # Published so reload-tools can re-advertise the tool list without a restart.
+        global _ACTIVE_MCP, _ACTIVE_CALL_MAIN_THREAD
+        _ACTIVE_MCP = mcp
+        _ACTIVE_CALL_MAIN_THREAD = self._call_main_thread
 
         # Register all MCP primitives
         register_all_tools(mcp, self._call_main_thread)

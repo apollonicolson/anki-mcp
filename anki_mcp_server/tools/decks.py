@@ -101,7 +101,6 @@ def delete_deck(deck_name: str, cards_too: bool = False):
     return {"deleted": deck_name, "cardsDeleted": cards_too}
 
 
-@T("change-deck", "Move cards to a different deck", write=True)
 def change_deck(cards: list[int], deck_name: str):
     deck = col().decks.by_name(deck_name)
     if not deck:

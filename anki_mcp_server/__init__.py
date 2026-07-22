@@ -109,6 +109,28 @@ def _on_profile_will_close() -> None:
     print("AnkiMCP Server: Stopped connection")
 
 
+AUTO_SNAPSHOT_KEEP = 20
+
+
+def _on_backup_did_complete() -> None:
+    """Piggyback a CoW snapshot on Anki's own backup cadence.
+
+    Anki's periodic backup already picks the moment when the collection is in a
+    consistent state, so there is no separate timer to own here.
+    """
+    try:
+        from .tools.history import snapshot_create, snapshot_prune
+        result = snapshot_create(label="autobackup")
+        # Snapshots are free at creation but pin the extents they reference, so an
+        # unpruned series grows without bound as the live collection diverges.
+        pruned = snapshot_prune(keep=AUTO_SNAPSHOT_KEEP, confirm=True)
+        print(f"AnkiMCP Server: snapshot {result.get('snapshot')} "
+              f"({result.get('duration_ms')} ms), pruned {len(pruned.get('deleted', []))}")
+    except Exception as e:
+        # A failed snapshot must never interfere with Anki's backup.
+        print(f"AnkiMCP Server: auto-snapshot skipped - {e}")
+
+
 def _on_app_shutdown() -> None:
     """Called when Anki is shutting down - final cleanup."""
     global _connection_manager, _config_manager
@@ -153,6 +175,7 @@ def _show_settings() -> None:
 # Register lifecycle hooks
 gui_hooks.profile_did_open.append(_on_profile_opened)
 gui_hooks.profile_will_close.append(_on_profile_will_close)
+gui_hooks.backup_did_complete.append(_on_backup_did_complete)
 
 # App shutdown hook - ensures cleanup even if profile close doesn't fire
 # (e.g., if user force quits or Anki crashes)

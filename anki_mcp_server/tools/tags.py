@@ -18,13 +18,11 @@ def list_tags(pattern: str = None, limit: int = None):
     return {"tags": all_tags, "count": len(all_tags), "total": total}
 
 
-@T("add-tags", "Add tags to notes", write=True)
 def add_tags(notes: list[int], tags: str):
     col().tags.bulk_add(notes, tags)
     return {"tagged": len(notes), "tags": tags}
 
 
-@T("remove-tags", "Remove tags from notes", write=True)
 def remove_tags(notes: list[int], tags: str):
     col().tags.bulk_remove(notes, tags)
     return {"untagged": len(notes), "tags": tags}

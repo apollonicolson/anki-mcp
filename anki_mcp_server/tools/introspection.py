@@ -1,4 +1,6 @@
 """Introspection tools - schema, query syntax, raw SQL."""
+import re
+
 from .base import T, ToolError, col
 
 
@@ -178,6 +180,53 @@ def query_syntax():
     }
 
 
+def _select_columns(sql: str):
+    """Best-effort column names from the top-level select list. Empty list if unparseable."""
+    body = sql.strip().rstrip(";")
+    m = re.match(r"(?is)^select\s+(?:distinct\s+|all\s+)?(.*)$", body)
+    if not m:
+        return []
+    rest = m.group(1)
+
+    # Walk the select list, tracking paren depth and string/identifier quoting, so
+    # commas and FROM inside subqueries or literals don't split it.
+    depth, quote, parts, buf = 0, None, [], []
+    for i, ch in enumerate(rest):
+        if quote:
+            buf.append(ch)
+            if ch == quote:
+                quote = None
+            continue
+        if ch in "'\"`":
+            quote = ch
+        elif ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        elif depth == 0 and ch == ",":
+            parts.append("".join(buf))
+            buf = []
+            continue
+        elif depth == 0 and re.match(r"(?i)from\b", rest[i:]) and (i == 0 or not rest[i - 1].isalnum()):
+            break
+        buf.append(ch)
+    parts.append("".join(buf))
+
+    names = []
+    for part in parts:
+        expr = part.strip()
+        if not expr or expr == "*" or expr.endswith(".*"):
+            return []  # wildcard expansion is unknown here; don't misalign names to rows
+        alias = re.search(r"(?is)\s+as\s+[\"'`\[]?([\w]+)[\"'`\]]?\s*$", expr)
+        if alias:
+            names.append(alias.group(1))
+        elif re.fullmatch(r"[\w.]+", expr):
+            names.append(expr.split(".")[-1])
+        else:
+            names.append(expr)
+    return names
+
+
 @T("raw-sql", "Execute read-only SQL query on Anki's database")
 def raw_sql(sql: str, params: list = None):
     """Execute a read-only SQL query on Anki's SQLite database."""
@@ -185,15 +234,20 @@ def raw_sql(sql: str, params: list = None):
     if not sql_upper.startswith("SELECT"):
         raise ToolError("Only SELECT queries allowed", hint="raw-sql is read-only. Use other tools for modifications.")
 
+    # Word-boundary match: a bare substring scan rejects legitimate SELECTs whose
+    # identifiers merely contain a keyword ("created" -> CREATE, "deleted" -> DELETE).
+    # Still over-restrictive for keywords appearing as whole words inside string
+    # literals (LIKE '%update%'); that fails closed, so it stays until it bites.
     dangerous = ["INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE", "ATTACH", "DETACH"]
     for keyword in dangerous:
-        if keyword in sql_upper:
+        if re.search(rf"\b{keyword}\b", sql_upper):
             raise ToolError(f"Forbidden keyword: {keyword}", hint="raw-sql is read-only.")
 
     try:
-        cursor = col().db.execute(sql, params or [])
-        columns = [desc[0] for desc in cursor.description] if cursor.description else []
-        rows = cursor.fetchall()
+        # DBProxy.execute is an alias for all(self, sql, *args) — params must be
+        # splatted, not passed as a single list argument.
+        rows = col().db.all(sql, *(params or []))
+        columns = _select_columns(sql)
 
         max_rows = 1000
         truncated = len(rows) > max_rows

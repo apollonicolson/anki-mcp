@@ -60,7 +60,6 @@ def model_styling(modelName: str):
     return {"css": m["css"]}
 
 
-@T("update-model-styling", "Update CSS for a note type", write=True)
 def update_model_styling(modelName: str, css: str):
     m = col().models.by_name(modelName)
     if not m:
@@ -136,7 +135,6 @@ def model_fields_on_templates(modelName: str):
     return result
 
 
-@T("update-model-templates", "Update card templates for a model", write=True)
 def update_model_templates(modelName: str, templates: dict):
     m = col().models.by_name(modelName)
     if not m:
@@ -172,7 +170,6 @@ def find_and_replace_in_models(model_name: str, find: str, replace: str, front: 
     return {"replacements": count, "modelName": model_name}
 
 
-@T("model-field-add", "Add a field to a model", write=True)
 def model_field_add(modelName: str, fieldName: str, index: int = None):
     m = col().models.by_name(modelName)
     if not m:
@@ -186,7 +183,6 @@ def model_field_add(modelName: str, fieldName: str, index: int = None):
     return {"modelName": modelName, "fieldName": fieldName}
 
 
-@T("model-field-remove", "Remove a field from a model", write=True)
 def model_field_remove(modelName: str, fieldName: str):
     m = col().models.by_name(modelName)
     if not m:
@@ -198,7 +194,6 @@ def model_field_remove(modelName: str, fieldName: str):
     raise ToolError(f"Field not found: {fieldName}")
 
 
-@T("model-field-rename", "Rename a field in a model", write=True)
 def model_field_rename(modelName: str, oldFieldName: str, newFieldName: str):
     m = col().models.by_name(modelName)
     if not m:
@@ -210,7 +205,6 @@ def model_field_rename(modelName: str, oldFieldName: str, newFieldName: str):
     raise ToolError(f"Field not found: {oldFieldName}")
 
 
-@T("model-field-reposition", "Move a field to a new position", write=True)
 def model_field_reposition(modelName: str, fieldName: str, index: int):
     m = col().models.by_name(modelName)
     if not m:
@@ -222,7 +216,6 @@ def model_field_reposition(modelName: str, fieldName: str, index: int):
     raise ToolError(f"Field not found: {fieldName}")
 
 
-@T("model-template-add", "Add a template to a model", write=True)
 def model_template_add(modelName: str, template: dict):
     m = col().models.by_name(modelName)
     if not m:
@@ -234,7 +227,6 @@ def model_template_add(modelName: str, template: dict):
     return {"modelName": modelName, "templateName": t["name"]}
 
 
-@T("model-template-remove", "Remove a template from a model", write=True)
 def model_template_remove(modelName: str, templateName: str):
     m = col().models.by_name(modelName)
     if not m:
@@ -246,7 +238,6 @@ def model_template_remove(modelName: str, templateName: str):
     raise ToolError(f"Template not found: {templateName}")
 
 
-@T("model-template-rename", "Rename a template", write=True)
 def model_template_rename(modelName: str, oldTemplateName: str, newTemplateName: str):
     m = col().models.by_name(modelName)
     if not m:
@@ -259,7 +250,6 @@ def model_template_rename(modelName: str, oldTemplateName: str, newTemplateName:
     raise ToolError(f"Template not found: {oldTemplateName}")
 
 
-@T("model-template-reposition", "Move a template to a new position", write=True)
 def model_template_reposition(modelName: str, templateName: str, index: int):
     m = col().models.by_name(modelName)
     if not m:

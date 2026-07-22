@@ -79,6 +79,7 @@ class T:
 
         if self.write:
             wrapped = _write_lock(wrapped)
+            wrapped = _journalled(wrapped, self.name)
 
         if self.require_col:
             wrapped = _require_col(wrapped)
@@ -119,6 +120,112 @@ def _write_lock(func: Callable) -> Callable:
             if mw and mw.col:
                 mw.maybeReset()
     return wrapper
+
+
+def _journalled(func: Callable, tool_name: str) -> Callable:
+    """Bracket a write tool with an append-only journal entry.
+
+    Runs inside _require_col (collection guaranteed) and outside _write_lock, so
+    the pre-image is read before the mutation and the outcome after it.
+    """
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        import time
+
+        from . import _journal
+
+        collection = col()
+        col_path = collection.path
+        note_ids = _journal.extract_note_ids(kwargs)
+
+        try:
+            pre = _journal.capture_pre_image(collection, note_ids)
+        except Exception as e:  # never let journalling block a write
+            pre = {"mode": "error", "reason": str(e)}
+
+        # String, not int: time_ns() exceeds 2**53 and JSON numbers are doubles,
+        # so an integer txid loses its low digits in transit and cannot be addressed.
+        txid = str(time.time_ns())
+        started = time.time()
+        error = None
+        result = None
+        try:
+            result = func(*args, **kwargs)
+        except Exception as e:
+            error = f"{type(e).__name__}: {e}"
+            raise
+        finally:
+            # A tool that resolved its own ids declared them, together with the
+            # pre-image taken at declare time. That beats the argument-name guess.
+            declared = _journal.take_declared()
+            if declared.get("ids"):
+                note_ids = declared["ids"]
+                pre = declared["pre"]
+            # A tool that served a read says so; an append-only log of facts should
+            # not fill with queries. Expressed as a guard rather than an early
+            # return: a `return` inside `finally` silently swallows exceptions.
+            was_read = _journal.take_read() and error is None
+            if not was_read:
+                facts = _finish_journal(collection, note_ids, pre, declared, txid,
+                                        started, tool_name, kwargs, error, col_path)
+                # A mutation carries its own txid and facts: reverting it must not
+                # require a second call to go and look them up.
+                if isinstance(result, dict):
+                    result.setdefault("txid", txid)
+                    result.setdefault("datom_count", len(facts))
+                    if facts:
+                        result.setdefault("datoms", facts)
+
+        return result
+
+    return wrapper
+
+
+def _finish_journal(collection, note_ids, pre, declared, txid, started,
+                    tool_name, kwargs, error, col_path) -> list:
+    """Capture the post-image, derive datoms, append the entry. Returns the facts."""
+    import time
+
+    from . import _journal
+
+    try:
+        post = _journal.capture_pre_image(collection, note_ids)
+        facts = _journal.datoms(pre, post)
+    except Exception as e:
+        post, facts = {"mode": "error", "reason": str(e)}, []
+
+    _journal.record({
+        "txid": txid,
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(started)),
+        "tool": tool_name,
+        "arguments": _journal_safe(kwargs),
+        "note_ids": note_ids[:_journal.MAX_PRE_IMAGE_NOTES],
+        "targets": "declared" if declared.get("ids") else ("inferred" if note_ids else "unknown"),
+        "pre_image": pre,
+        "datoms": facts,
+        "datom_count": len(facts),
+        "duration_ms": round((time.time() - started) * 1000, 1),
+        "error": error,
+    }, col_path)
+    return facts
+
+
+def _journal_safe(value, _depth: int = 0):
+    """Coerce tool arguments to something JSON-serialisable and bounded."""
+    if _depth > 6:
+        return "<truncated:depth>"
+    if isinstance(value, dict):
+        return {str(k): _journal_safe(v, _depth + 1) for k, v in list(value.items())[:200]}
+    if isinstance(value, (list, tuple)):
+        items = [_journal_safe(v, _depth + 1) for v in value[:200]]
+        if len(value) > 200:
+            items.append(f"<truncated:{len(value) - 200} more>")
+        return items
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        if isinstance(value, str) and len(value) > 4000:
+            return value[:4000] + f"<truncated:{len(value) - 4000} more chars>"
+        return value
+    return repr(value)[:500]
 
 
 def _error_handler(func: Callable) -> Callable:

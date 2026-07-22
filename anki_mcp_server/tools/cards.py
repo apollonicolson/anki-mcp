@@ -42,7 +42,6 @@ def get_ease_factors(cards: list[int]):
     return {"easeFactors": [col().get_card(c).factor for c in cards]}
 
 
-@T("set-ease-factors", "Set ease factors for cards", write=True)
 def set_ease_factors(cards: list[int], easeFactors: list[int]):
     if len(cards) != len(easeFactors):
         raise ToolError("cards and easeFactors must have same length")
@@ -53,7 +52,6 @@ def set_ease_factors(cards: list[int], easeFactors: list[int]):
     return {"updated": len(cards)}
 
 
-@T("set-cards-suspended", "Set suspension state for cards", write=True)
 def set_cards_suspended(cards: list[int], suspended: bool = True):
     if suspended:
         col().sched.suspend_cards(cards)
@@ -67,7 +65,6 @@ def are_suspended(cards: list[int]):
     return {str(cid): col().get_card(cid).queue == -1 for cid in cards}
 
 
-@T("set-cards-buried", "Set buried state for cards", write=True)
 def set_cards_buried(cards: list[int] = None, buried: bool = True):
     if buried:
         if not cards:
@@ -81,7 +78,6 @@ def set_cards_buried(cards: list[int] = None, buried: bool = True):
     return {"deck": col().decks.current()["name"], "buried": False}
 
 
-@T("set-card-flag", "Set flag on cards (0-7)", write=True)
 def set_card_flag(cards: list[int], flag: int):
     if not 0 <= flag <= 7:
         raise ToolError("Flag must be 0-7")
@@ -89,19 +85,16 @@ def set_card_flag(cards: list[int], flag: int):
     return {"flagged": len(cards), "flag": flag}
 
 
-@T("forget-cards", "Reset cards to new state", write=True)
 def forget_cards(cards: list[int]):
     col().sched.schedule_cards_as_new(cards)
     return {"reset": len(cards)}
 
 
-@T("set-due-date", "Set due date for cards", write=True)
 def set_due_date(cards: list[int], days: str):
     col().sched.set_due_date(cards, days)
     return {"rescheduled": len(cards), "days": days}
 
 
-@T("answer-cards", "Answer cards programmatically", write=True)
 def answer_cards(answers: list[dict]):
     for a in answers:
         c = col().get_card(a["cardId"])
