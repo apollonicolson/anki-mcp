@@ -17,6 +17,8 @@ Thread Safety:
 """
 
 import queue
+import threading
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -88,6 +90,8 @@ class ToolResponse:
 
 
 class QueueBridge:
+    RESPONSE_TIMEOUT = 900  # seconds; a large import or rsync legitimately takes minutes
+
     """Thread-safe bridge between MCP server and Anki main thread.
 
     This class provides the core infrastructure for safe cross-thread communication
@@ -152,6 +156,12 @@ class QueueBridge:
         self.request_queue: queue.Queue[ToolRequest] = queue.Queue()
         self.response_queue: queue.Queue[ToolResponse] = queue.Queue()
         self._shutdown = False
+        # Responses claimed off the queue by a thread they do not belong to, held
+        # for whoever is actually waiting on that request_id.
+        # One slot per in-flight request. Callers block on their own slot, so a
+        # slow request cannot hand its result to a different caller.
+        self._slots: dict[str, queue.Queue] = {}
+        self._slots_lock = threading.Lock()
 
     def send_request(self, request: ToolRequest) -> ToolResponse:
         """Send request to main thread and wait for response.
@@ -199,12 +209,23 @@ class QueueBridge:
         if self._shutdown:
             raise Exception("Bridge is shutting down")
 
+        with self._slots_lock:
+            self._slots[request.request_id] = queue.Queue(maxsize=1)
         self.request_queue.put(request)
 
-        # Block until main thread responds (with timeout to prevent indefinite hang)
-        # 30 second timeout is generous - typical operations complete in milliseconds
-        # If this times out, something is seriously wrong (main thread crashed, etc.)
-        return self.response_queue.get(timeout=30)
+        # Match responses by request_id. Taking whatever arrives next is only
+        # correct while exactly one request is ever in flight; one slow call (a
+        # large rsync, an import) desynchronises every response after it and
+        # callers receive each other's results.
+        slot = self._slots[request.request_id]
+        try:
+            response = slot.get(timeout=self.RESPONSE_TIMEOUT)
+        finally:
+            with self._slots_lock:
+                self._slots.pop(request.request_id, None)
+        if response.request_id == "shutdown":
+            raise Exception("Bridge is shutting down")
+        return response
 
     def get_pending_request(self) -> ToolRequest | None:
         """Non-blocking check for pending requests.
@@ -267,7 +288,12 @@ class QueueBridge:
             ... )
             >>> bridge.send_response(response)  # Unblocks background thread
         """
-        self.response_queue.put(response)
+        with self._slots_lock:
+            slot = self._slots.get(response.request_id)
+        if slot is None:
+            # Caller already gave up; nothing to deliver to.
+            return
+        slot.put(response)
 
     def shutdown(self) -> None:
         """Unblock any waiting requests on shutdown.
@@ -305,10 +331,12 @@ class QueueBridge:
 
         # Put poison pill to unblock any waiting threads
         # This ensures graceful shutdown without deadlocks
-        self.response_queue.put(
-            ToolResponse(
-                request_id="shutdown",
-                success=False,
-                error="Server shutting down",
-            )
-        )
+        # Poison every waiting slot so no caller blocks through shutdown.
+        with self._slots_lock:
+            slots = list(self._slots.values())
+        for slot in slots:
+            try:
+                slot.put_nowait(ToolResponse(request_id="shutdown", success=False,
+                                             error="Server shutting down"))
+            except queue.Full:
+                pass

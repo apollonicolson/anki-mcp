@@ -332,6 +332,45 @@ def offsite_push(destination: str, snapshots: int = 1, include_media: bool = Fal
             "note": "reflink sharing is not preserved across the wire; each snapshot lands full size"}
 
 
+@T("journal-commit", "Commit the journal to its git archive", write=True)
+def journal_commit(message: str = None):
+    """Snapshot the fact history into git.
+
+    The journal is the only irreplaceable artefact here - AnkiWeb already mirrors
+    collection state, and local snapshots cover rollback. It is append-only text,
+    so git is the whole archive strategy: no tarballs, no second mechanism.
+    """
+    d = _journal.journal_dir(col().path)
+    if not os.path.isdir(os.path.join(d, ".git")):
+        raise ToolError("journal is not a git repository",
+                        hint=f"run: git init in {d}")
+
+    identity = ["-c", "user.name=Apollo Nicolson", "-c", "user.email=apollo@typemark.com.au"]
+    env = dict(os.environ, GIT_COMMITTER_NAME="Apollo Nicolson",
+               GIT_COMMITTER_EMAIL="apollo@typemark.com.au")
+    subprocess.run(["git", "-C", d] + identity + ["add", "-A"],
+                   capture_output=True, text=True, env=env)
+    status = subprocess.run(["git", "-C", d, "status", "--porcelain"],
+                            capture_output=True, text=True, env=env).stdout.strip()
+    if not status:
+        return {"committed": False, "reason": "no journal changes since last commit"}
+
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%S")
+    result = subprocess.run(
+        ["git", "-C", d] + identity + ["commit", "-q", "-m", message or f"Journal {stamp}"],
+        capture_output=True, text=True, env=env)
+    if result.returncode != 0:
+        raise ToolError(f"git commit failed: {result.stderr.strip()[:300]}")
+
+    head = subprocess.run(["git", "-C", d, "log", "--oneline", "-1"],
+                          capture_output=True, text=True, env=env).stdout.strip()
+    remote = subprocess.run(["git", "-C", d, "remote"],
+                            capture_output=True, text=True, env=env).stdout.strip()
+    return {"committed": True, "head": head, "repo": d,
+            "remote": remote or None,
+            "note": None if remote else "no remote configured; archive is still local-only"}
+
+
 @T("journal-tail", "Recent write-tool transactions, newest first")
 def journal_tail(limit: int = 20, tool: str = None, include_pre_image: bool = False):
     entries = _journal.read_entries(col().path, limit=limit, tool=tool)

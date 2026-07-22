@@ -119,11 +119,16 @@ def _on_backup_did_complete() -> None:
     consistent state, so there is no separate timer to own here.
     """
     try:
-        from .tools.history import snapshot_create, snapshot_prune
+        from .tools.history import journal_commit, snapshot_create, snapshot_prune
         result = snapshot_create(label="autobackup")
         # Snapshots are free at creation but pin the extents they reference, so an
         # unpruned series grows without bound as the live collection diverges.
         pruned = snapshot_prune(keep=AUTO_SNAPSHOT_KEEP, keep_speculative=3, confirm=True)
+        # The journal is the part no other layer covers; archive it on the same beat.
+        try:
+            journal_commit()
+        except Exception as e:
+            print(f"AnkiMCP Server: journal commit skipped - {e}")
         print(f"AnkiMCP Server: snapshot {result.get('snapshot')} "
               f"({result.get('duration_ms')} ms), pruned {len(pruned.get('deleted', []))}")
     except Exception as e:
