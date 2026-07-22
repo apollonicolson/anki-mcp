@@ -56,14 +56,6 @@ def find_notes(query: str, limit: int = 100, offset: int = 0):
     return {"noteIds": notes, "count": len(notes), "total": total, "hasMore": offset + limit < total, "offset": offset, "limit": limit}
 
 
-def get_notes_info(notes: list[int]):
-    result = []
-    for nid in notes:
-        try:
-            result.append(_note_row(nid))
-        except:
-            result.append({"noteId": nid, "error": "Not found"})
-    return {"notes": result}
 
 
 def add_note(
@@ -266,12 +258,5 @@ def update_note_model(note_id: int, model_name: str, field_map: dict = None, car
     return {"noteId": note_id, "newModel": model_name}
 
 
-def get_note_tags(note_id: int):
-    n = col().get_note(note_id)
-    if not n:
-        raise ToolError(f"Note not found: {note_id}")
-    return {"noteId": note_id, "tags": n.tags}
 
 
-def get_notes_mod_time(notes: list[int]):
-    return {str(nid): col().get_note(nid).mod for nid in notes}

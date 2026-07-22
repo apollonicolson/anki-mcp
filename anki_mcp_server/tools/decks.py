@@ -150,15 +150,6 @@ def delete_deck_config(config_id: int):
     return {"removed": config_id}
 
 
-def get_decks_for_cards(cards: list[int]):
-    deck_map = {}
-    for cid in cards:
-        c = col().get_card(cid)
-        name = col().decks.name(c.did)
-        if name not in deck_map:
-            deck_map[name] = []
-        deck_map[name].append(cid)
-    return deck_map
 
 
 def get_deck_due_tree(sparse: bool = True):

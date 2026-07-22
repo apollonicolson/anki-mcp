@@ -72,16 +72,6 @@ def insert_reviews(reviews: list[dict]):
     return {"inserted": len(reviews)}
 
 
-def get_collection_info():
-    from aqt import mw
-    return {
-        "path": col().path,
-        "mediaPath": col().media.dir(),
-        "modTime": col().mod,
-        "schemaVersion": col().db.scalar("select ver from col"),
-        "profileName": mw.pm.name,
-        "profilePath": mw.pm.profileFolder(),
-    }
 
 
 def get_empty_cards():
@@ -93,10 +83,6 @@ def get_empty_cards():
     }
 
 
-def find_duplicates(field_name: str, deck_name: str = None):
-    query = f'deck:"{deck_name}"' if deck_name else ""
-    dupes = col().find_dupes(field_name, query)
-    return {"duplicates": [{"value": d[0], "noteIds": list(d[1])} for d in dupes], "count": len(dupes)}
 
 
 def check_integrity(fix: bool = False):

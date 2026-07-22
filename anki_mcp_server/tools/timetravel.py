@@ -158,9 +158,8 @@ def snapshot_as_of(note_id: int, snapshot: str):
     }
 
 
-@T("collection-info", "Collection paths plus note/card/deck/notetype counts")
 def collection_info():
-    """get-collection-info returns paths but no counts; this answers the first question."""
+    """Paths plus counts. Reached via anki {cmd:"query", from:"collection"}."""
     collection = col()
     scalar = collection.db.scalar
     return {

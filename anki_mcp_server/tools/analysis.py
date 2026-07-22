@@ -7,51 +7,17 @@ Anki queries together by hand.
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from html import unescape
-import re
 from typing import Any
 
+from ._text import norm as _norm, strip_html as _strip_html
 from .base import T, col
 
 
-_TAG_RE = re.compile(r"<[^>]+>")
-_IMG_RE = re.compile(r"<img\b[^>]*>", re.I)
-_BR_RE = re.compile(r"<br\s*/?>", re.I)
-_SPACE_RE = re.compile(r"\s+")
-_NON_TEXT_RE = re.compile(r"[^a-z0-9_+\-*/=<>^()., :;?\[\]{}|]+")
-
-_SYMBOL_REPLACEMENTS = {
-    "−": "-",
-    "–": "-",
-    "—": "-",
-    "×": "x",
-    "∙": "x",
-    "⋅": "x",
-    "÷": "/",
-    "²": "^2",
-    "³": "^3",
-    "≤": "<=",
-    "≥": ">=",
-    "√": "sqrt",
-}
 
 
-def _strip_html(value: Any) -> str:
-    text = "" if value is None else str(value)
-    text = unescape(text)
-    text = _IMG_RE.sub(" [image] ", text)
-    text = _BR_RE.sub(" ", text)
-    text = _TAG_RE.sub(" ", text)
-    text = text.replace("\xa0", " ")
-    return _SPACE_RE.sub(" ", text).strip()
 
 
-def _norm(value: Any) -> str:
-    text = _strip_html(value).lower()
-    for src, dst in _SYMBOL_REPLACEMENTS.items():
-        text = text.replace(src, dst)
-    text = _NON_TEXT_RE.sub(" ", text)
-    return _SPACE_RE.sub(" ", text).strip()
+
 
 
 def _field_map(note) -> dict[str, str]:

@@ -10,32 +10,10 @@ def find_cards(query: str, limit: int = 100, offset: int = 0):
     return {"cardIds": cards, "count": len(cards), "total": total, "hasMore": offset + limit < total, "offset": offset, "limit": limit}
 
 
-def get_cards_info(cards: list[int]):
-    result = []
-    for cid in cards:
-        try:
-            c = col().get_card(cid)
-            n = c.note()
-            result.append({
-                "cardId": cid, "noteId": n.id, "deckId": c.did,
-                "deckName": col().decks.name(c.did), "modelName": n.note_type()["name"],
-                "question": c.question(), "answer": c.answer(),
-                "due": c.due, "type": c.type, "queue": c.queue,
-                "interval": c.ivl, "factor": c.factor, "reps": c.reps, "lapses": c.lapses,
-            })
-        except:
-            result.append({"cardId": cid, "error": "Not found"})
-    return {"cards": result}
 
 
-def get_notes_for_cards(cards: list[int]):
-    mapping = {str(cid): col().get_card(cid).nid for cid in cards}
-    unique_notes = list(set(mapping.values()))
-    return {"mapping": mapping, "uniqueNoteIds": unique_notes, "cardCount": len(cards), "noteCount": len(unique_notes)}
 
 
-def get_ease_factors(cards: list[int]):
-    return {"easeFactors": [col().get_card(c).factor for c in cards]}
 
 
 def set_ease_factors(cards: list[int], easeFactors: list[int]):
@@ -56,8 +34,6 @@ def set_cards_suspended(cards: list[int], suspended: bool = True):
     return {"cards": len(cards), "suspended": suspended}
 
 
-def are_suspended(cards: list[int]):
-    return {str(cid): col().get_card(cid).queue == -1 for cid in cards}
 
 
 def set_cards_buried(cards: list[int] = None, buried: bool = True):
@@ -97,23 +73,10 @@ def answer_cards(answers: list[dict]):
     return {"answered": len(answers)}
 
 
-def are_due(cards: list[int]):
-    return {str(cid): col().get_card(cid).queue == 0 for cid in cards}
 
 
-def get_intervals(cards: list[int], complete: bool = False):
-    result = []
-    for cid in cards:
-        c = col().get_card(cid)
-        if complete:
-            result.append({"cardId": cid, "interval": c.ivl, "due": c.due, "queue": c.queue})
-        else:
-            result.append(c.ivl)
-    return {"intervals": result}
 
 
-def get_cards_mod_time(cards: list[int]):
-    return {str(cid): col().get_card(cid).mod for cid in cards}
 
 
 @T("relearn-cards", "Set cards to relearn state", write=True)
