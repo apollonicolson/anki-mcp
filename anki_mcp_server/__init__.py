@@ -123,7 +123,7 @@ def _on_backup_did_complete() -> None:
         result = snapshot_create(label="autobackup")
         # Snapshots are free at creation but pin the extents they reference, so an
         # unpruned series grows without bound as the live collection diverges.
-        pruned = snapshot_prune(keep=AUTO_SNAPSHOT_KEEP, confirm=True)
+        pruned = snapshot_prune(keep=AUTO_SNAPSHOT_KEEP, keep_speculative=3, confirm=True)
         print(f"AnkiMCP Server: snapshot {result.get('snapshot')} "
               f"({result.get('duration_ms')} ms), pruned {len(pruned.get('deleted', []))}")
     except Exception as e:

@@ -21,6 +21,12 @@ from .base import T, ToolError, col, mw
 
 SNAP_DIRNAME = "mcp-snapshots"
 
+# Two families share the directory and must never be confused: snap-* are
+# recovery points, spec-* are disposable speculative values. Sorting by name puts
+# spec after snap, so an undiscriminating "newest" picks a throwaway.
+SNAPSHOT_PREFIX = "snap-"
+SPECULATIVE_PREFIX = "spec-"
+
 
 def _profile_dir() -> str:
     return os.path.dirname(col().path)
@@ -40,6 +46,16 @@ def _reflink(src: str, dst: str) -> None:
     )
     if result.returncode != 0:
         raise ToolError(f"copy failed: {result.stderr.strip()}", hint=f"{src} -> {dst}")
+
+
+def _snapshot_dirs(prefix: str = SNAPSHOT_PREFIX) -> list:
+    """Snapshot directory names of one family, newest first."""
+    root = _snap_root()
+    return sorted(
+        (d for d in os.listdir(root)
+         if d.startswith(prefix) and os.path.isdir(os.path.join(root, d))),
+        reverse=True,
+    )
 
 
 def _tree_bytes(path: str) -> int:
@@ -128,20 +144,21 @@ def snapshot_list(limit: int = 50):
 
 
 @T("snapshot-prune", "Delete all but the newest N snapshots", write=True)
-def snapshot_prune(keep: int = 10, confirm: bool = False):
+def snapshot_prune(keep: int = 10, keep_speculative: int = 3, confirm: bool = False):
     if keep < 1:
         raise ToolError("keep must be >= 1")
     root = _snap_root()
-    dirs = sorted(
-        (d for d in os.listdir(root) if os.path.isdir(os.path.join(root, d))), reverse=True
-    )
-    doomed = dirs[keep:]
+    snaps = _snapshot_dirs(SNAPSHOT_PREFIX)
+    specs = _snapshot_dirs(SPECULATIVE_PREFIX)
+    doomed = snaps[keep:] + specs[max(0, int(keep_speculative)):]
+    kept = snaps[:keep] + specs[:max(0, int(keep_speculative))]
     if not confirm:
-        return {"would_delete": doomed, "would_keep": dirs[:keep], "confirm": False,
+        return {"would_delete": doomed, "would_keep": kept, "confirm": False,
+                "snapshots": len(snaps), "speculative": len(specs),
                 "hint": "re-run with confirm=true to delete"}
     for name in doomed:
         shutil.rmtree(os.path.join(root, name))
-    return {"deleted": doomed, "kept": dirs[:keep], "confirm": True}
+    return {"deleted": doomed, "kept": kept, "confirm": True}
 
 
 @T("snapshot-restore-plan", "Emit a script that restores a snapshot with Anki closed")
@@ -271,7 +288,8 @@ def snapshot_restore(snapshot: str, confirm: bool = False):
 
 
 @T("offsite-push", "Copy snapshots and the journal to another machine over rsync/ssh")
-def offsite_push(destination: str, include_media: bool = False, dry_run: bool = True):
+def offsite_push(destination: str, snapshots: int = 1, include_media: bool = False,
+                 dry_run: bool = True):
     """Spatial durability. Snapshots share a disk with the live collection; sync
     mirrors state but keeps no history. Neither covers the other.
 
@@ -279,16 +297,25 @@ def offsite_push(destination: str, include_media: bool = False, dry_run: bool = 
     directory, not read-only subvolumes, so send/receive does not apply. Reflink
     sharing does not survive the transfer either - the destination pays full size.
     """
-    if ":" not in destination:
-        raise ToolError("destination must be an rsync target, e.g. hbt-server:~/anki-history/",
-                        hint="host:path")
+    # host:path for a remote, or an absolute path for an external disk / mount.
+    if ":" not in destination and not os.path.isabs(destination):
+        raise ToolError("destination must be host:path or an absolute local path",
+                        hint="e.g. hbt-server:~/anki-history/ or /run/media/apollon/backup/anki/")
 
     profile = _profile_dir()
-    sources = [_snap_root(), _journal.journal_dir(col().path)]
+    # Reflink sharing does not survive the transfer, so every snapshot lands at
+    # full size. Push the newest N as recovery points and rely on the journal for
+    # history - it is the part that is small and irreplaceable.
+    newest = _snapshot_dirs(SNAPSHOT_PREFIX)[:max(1, int(snapshots))]
+    if not newest:
+        raise ToolError("no snap-* recovery points to push", hint="run snapshot-create first")
+    sources = [os.path.join(_snap_root(), d) for d in newest]
+    sources.append(_journal.journal_dir(col().path))
     if include_media:
         sources.append(os.path.join(profile, "collection.media"))
 
-    cmd = ["rsync", "-a", "--delete-after", "--partial"]
+    # No --delete: the destination accumulates history the source has pruned.
+    cmd = ["rsync", "-a", "--partial"]
     if dry_run:
         cmd.append("--dry-run")
     cmd += ["--stats"] + sources + [destination]
@@ -301,7 +328,8 @@ def offsite_push(destination: str, include_media: bool = False, dry_run: bool = 
     stats = [line for line in result.stdout.splitlines()
              if line.startswith(("Number of files", "Total file size", "Total transferred"))]
     return {"destination": destination, "sources": sources, "dry_run": dry_run,
-            "stats": stats, "note": "reflink sharing is not preserved across the wire"}
+            "snapshots_pushed": len(newest), "stats": stats,
+            "note": "reflink sharing is not preserved across the wire; each snapshot lands full size"}
 
 
 @T("journal-tail", "Recent write-tool transactions, newest first")
@@ -378,13 +406,21 @@ def journal_revert(txid: str, confirm: bool = False):
         except Exception:
             skipped.append({"id": row["id"], "reason": "card no longer exists"})
             continue
+        # Deck moves go through set_deck, not a did assignment: Anki keeps deck
+        # membership consistent (original deck, filtered-deck state) there.
+        moved = card.did != row["did"]
+        if moved:
+            collection.set_deck([card.id], row["did"])
+            card = collection.get_card(row["id"])
+
         changed = False
-        for attribute in ("did", "type", "queue", "due", "ivl", "factor", "flags"):
+        for attribute in ("type", "queue", "due", "ivl", "factor", "flags"):
             if getattr(card, attribute, None) != row[attribute]:
                 setattr(card, attribute, row[attribute])
                 changed = True
         if changed:
             collection.update_card(card)
+        if changed or moved:
             cards_restored += 1
 
     return {"txid": txid, "tool": entry.get("tool"), "reverted": len(plan),

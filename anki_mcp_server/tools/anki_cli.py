@@ -649,8 +649,26 @@ def anki(request: dict[str, Any]) -> dict[str, Any]:
         if source == "snapshots":
             from .history import snapshot_list
             return snapshot_list(limit=int(request.get("limit", 50)))
-        raise ToolError(f"Unknown query source: {source}",
-                        hint="notes, cards, journal, snapshots")
+        if source == "decks":
+            from .decks import list_decks
+            return list_decks(pattern=request.get("pattern"),
+                              limit=int(request.get("limit", 100)),
+                              include_stats=bool(request.get("include_stats")))
+        if source == "models":
+            from .models import list_models
+            return list_models(pattern=request.get("pattern"),
+                               limit=int(request.get("limit", 100)),
+                               include_fields=bool(request.get("include_fields")))
+        if source == "tags":
+            from .tags import list_tags
+            return list_tags(pattern=request.get("pattern"), limit=request.get("limit"))
+        if source == "collection":
+            from .timetravel import collection_info
+            return collection_info()
+        raise ToolError(
+            f"Unknown query source: {source}",
+            hint="notes, cards, decks, models, tags, collection, journal, snapshots",
+        )
     if cmd == "inspect":
         return _inspect(request)
     if cmd == "analyze":
