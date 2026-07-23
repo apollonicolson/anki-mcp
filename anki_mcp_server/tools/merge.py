@@ -1,0 +1,194 @@
+"""Merge notes that describe the same fact, keeping the most complete content.
+
+The DIVE decks were re-imported from Quizlet once per course year, so the same
+term recurs across A0/A1/A2/C0/C1 with drift: capitalisation, trailing periods,
+"#" for "number", and images present in some years but not others. Later years
+sometimes extend the definition rather than restate it - for 67 terms the earlier
+text is literally a prefix of the later one.
+
+Merge rule, in two parts, because content and scheduling want different winners:
+
+  content  - per field, the longest value in the group. Field-wise rather than
+             note-wise, so a note holding only an image and a note holding only
+             the long definition combine instead of one displacing the other.
+  survivor - the note with review history if the group has one, else the note
+             that already holds the most content. Deleting a studied note to
+             keep a longer unstudied twin would discard real scheduling data.
+"""
+import re
+from collections import defaultdict
+
+from .base import T, ToolError, col
+
+SEP = "\x1f"
+TAG_RE = re.compile(r"<[^>]+>")
+WS_RE = re.compile(r"\s+")
+
+
+def _key(value: str) -> str:
+    """Comparison form of the first field: markup, case and punctuation removed."""
+    text = TAG_RE.sub(" ", value or "").replace("&nbsp;", " ")
+    text = re.sub(r"[^\w\s]", "", text.lower())
+    return WS_RE.sub(" ", text).strip()
+
+
+def _visible_len(value: str) -> int:
+    """Length of the text a reader actually sees, so markup cannot win on bulk."""
+    return len(WS_RE.sub(" ", TAG_RE.sub(" ", value or "")).strip())
+
+
+def _richest(values: list[str]) -> str:
+    """The most complete version of one field.
+
+    An <img> is content even though it contributes no visible text, so a value
+    carrying one outranks a bare value of equal prose length.
+    """
+    def score(v):
+        return (_visible_len(v), 1 if "<img" in (v or "") else 0, len(v or ""))
+
+    return max(values, key=score)
+
+
+BODY_SIMILARITY = 0.6
+
+
+def _body(fields: list[str], key_field: int) -> str:
+    """Everything except the key field, normalised - the fact's actual content."""
+    parts = [v for i, v in enumerate(fields) if i != key_field]
+    text = TAG_RE.sub(" ", " ".join(parts)).replace("&nbsp;", " ")
+    return WS_RE.sub(" ", re.sub(r"[^\w\s]", "", text.lower())).strip()
+
+
+def _compatible(ids: list, rows: dict, key_field: int) -> list:
+    """The largest subset of a key group whose bodies are versions of one fact.
+
+    Compatible means containment (a later year extending an earlier definition)
+    or high similarity (cosmetic drift). An image-only note has an empty body and
+    is compatible with anything sharing its key, since it adds rather than
+    contradicts.
+    """
+    from difflib import SequenceMatcher
+
+    bodies = {i: _body(rows[i]["fields"], key_field) for i in ids}
+
+    def ok(a, b):
+        x, y = bodies[a], bodies[b]
+        if not x or not y:
+            return True
+        if x in y or y in x:
+            return True
+        return SequenceMatcher(None, x, y).ratio() >= BODY_SIMILARITY
+
+    # Anchor on the richest note; a merge is only meaningful relative to the
+    # version that will survive.
+    anchor = max(ids, key=lambda i: len(bodies[i]))
+    return [anchor] + [i for i in ids if i != anchor and ok(anchor, i)]
+
+
+@T("merge-duplicates", "Merge same-key notes, keeping the most complete field values",
+   write=True)
+def merge_duplicates(query: str, key_field: int = 0, dry_run: bool = True,
+                     limit: int = None):
+    """Collapse notes sharing a normalised key_field into one note per key.
+
+    Only merges within a single notetype: field indices are not comparable
+    across notetypes, so a cross-notetype merge would scramble content.
+    """
+    if not query:
+        raise ToolError("A query is required", hint='e.g. query="deck:\\"4 MATH::...\\""')
+
+    note_ids = col().find_notes(query)
+    if not note_ids:
+        return {"groups": 0, "note": "query matched no notes"}
+
+    rows = {}
+    for nid in note_ids:
+        note = col().get_note(nid)
+        reps = max((c.reps for c in note.cards()), default=0)
+        rows[nid] = {"mid": note.mid, "fields": list(note.fields), "reps": reps}
+
+    groups = defaultdict(list)
+    for nid, row in rows.items():
+        if key_field >= len(row["fields"]):
+            continue
+        k = _key(row["fields"][key_field])
+        if k:
+            groups[(row["mid"], k)].append(nid)
+
+    plans, skipped = [], []
+    for (mid, k), ids in sorted(groups.items(), key=lambda kv: kv[0][1]):
+        if len(ids) < 2:
+            continue
+        # A matching key is not sufficient. "A2" is Euclid's second axiom in one
+        # deck and the Algebra 2 course label in another; some imported notes are
+        # reversed, carrying the definition in field 0. Require the bodies to be
+        # versions of one fact before treating them as one fact.
+        ids = _compatible(ids, rows, key_field)
+        if len(ids) < 2:
+            skipped.append(k)
+            continue
+        width = max(len(rows[i]["fields"]) for i in ids)
+        merged = [
+            _richest([rows[i]["fields"][f] if f < len(rows[i]["fields"]) else ""
+                      for i in ids])
+            for f in range(width)
+        ]
+        studied = [i for i in ids if rows[i]["reps"] > 0]
+        if studied:
+            # Most-reviewed note keeps its identity, and with it its cards.
+            survivor = max(studied, key=lambda i: (rows[i]["reps"], i))
+        else:
+            survivor = max(ids, key=lambda i: sum(_visible_len(v)
+                                                  for v in rows[i]["fields"]))
+        losers = [i for i in ids if i != survivor]
+        changed = merged != rows[survivor]["fields"][:len(merged)]
+        plans.append({"key": k, "survivor": survivor, "delete": losers,
+                      "merged": merged, "content_updated": changed,
+                      "kept_studied": bool(studied),
+                      "studied_lost": sum(1 for i in losers if rows[i]["reps"] > 0)})
+
+    if limit:
+        plans = plans[: int(limit)]
+
+    summary = {
+        "groups": len(plans),
+        "notes_before": sum(len(p["delete"]) + 1 for p in plans),
+        "notes_after": len(plans),
+        "to_delete": sum(len(p["delete"]) for p in plans),
+        "survivors_rewritten": sum(1 for p in plans if p["content_updated"]),
+        "groups_keeping_studied_note": sum(1 for p in plans if p["kept_studied"]),
+        "studied_notes_deleted": sum(p["studied_lost"] for p in plans),
+        "groups_skipped_incompatible": len(skipped),
+        "skipped_keys": skipped[:15],
+    }
+
+    if dry_run:
+        summary["dry_run"] = True
+        summary["sample"] = [
+            {"key": p["key"], "deletes": len(p["delete"]),
+             "rewritten": p["content_updated"],
+             "merged_preview": [_visible_len(v) for v in p["merged"]]}
+            for p in plans[:12]
+        ]
+        summary["hint"] = "re-run with dry_run=false to apply"
+        return summary
+
+    from . import _journal
+
+    touched = [p["survivor"] for p in plans] + [i for p in plans for i in p["delete"]]
+    _journal.declare_targets(col(), touched)
+
+    for plan in plans:
+        note = col().get_note(plan["survivor"])
+        merged = plan["merged"]
+        for idx in range(min(len(note.fields), len(merged))):
+            note.fields[idx] = merged[idx]
+        col().update_note(note)
+
+    doomed = [i for p in plans for i in p["delete"]]
+    if doomed:
+        col().remove_notes(doomed)
+
+    summary["dry_run"] = False
+    summary["deleted"] = len(doomed)
+    return summary

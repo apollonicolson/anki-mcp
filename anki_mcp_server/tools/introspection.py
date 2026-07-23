@@ -183,6 +183,18 @@ def query_syntax():
 def _select_columns(sql: str):
     """Best-effort column names from the top-level select list. Empty list if unparseable."""
     body = sql.strip().rstrip(";")
+    # For a CTE the interesting select list is the final one, after the last
+    # closing paren of the WITH clause - not the first SELECT inside it.
+    if re.match(r"(?is)^with\b", body):
+        depth = 0
+        for i, ch in enumerate(body):
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+            elif depth == 0 and body[i:i + 7].upper() == "SELECT ":
+                body = body[i:]
+                break
     m = re.match(r"(?is)^select\s+(?:distinct\s+|all\s+)?(.*)$", body)
     if not m:
         return []
@@ -231,8 +243,12 @@ def _select_columns(sql: str):
 def raw_sql(sql: str, params: list = None):
     """Execute a read-only SQL query on Anki's SQLite database."""
     sql_upper = sql.strip().upper()
-    if not sql_upper.startswith("SELECT"):
-        raise ToolError("Only SELECT queries allowed", hint="raw-sql is read-only. Use other tools for modifications.")
+    # A CTE is read-only and is often the only sane way to express a grouped
+    # analysis. WITH ... INSERT/UPDATE/DELETE is still caught by the keyword scan
+    # below, so allowing the prefix does not widen what can be written.
+    if not (sql_upper.startswith("SELECT") or sql_upper.startswith("WITH")):
+        raise ToolError("Only SELECT/WITH queries allowed",
+                        hint="raw-sql is read-only. Use other tools for modifications.")
 
     # Word-boundary match: a bare substring scan rejects legitimate SELECTs whose
     # identifiers merely contain a keyword ("created" -> CREATE, "deleted" -> DELETE).
