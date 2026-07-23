@@ -100,6 +100,63 @@ def add_notes(notes: list[dict]) -> dict:
     return {"results": results, "added": sum(1 for r in results if r["success"])}
 
 
+@T("import-notes-file", "Add notes from a local JSON file of note dicts", write=True)
+def import_notes_file(path: str, deck_name: str = None, model_name: str = None,
+                      dry_run: bool = True, allow_duplicate: bool = False):
+    """Bulk-add from a file so large batches never travel through the tool call.
+
+    A book chapter is thousands of lines of JSON; inlining it in the request wastes
+    the caller's context and hits response limits. The file is the payload.
+
+    Expects a JSON list of {deckName, modelName, fields, tags}. deck_name/model_name
+    override per-note values, for the common case of one deck and one notetype.
+    Insertion order is preserved, so it also fixes the new-card sequence.
+    """
+    import json
+    import os
+
+    if not os.path.isfile(path):
+        raise ToolError(f"No such file: {path}")
+    with open(path, encoding="utf-8") as fh:
+        batch = json.load(fh)
+    if not isinstance(batch, list):
+        raise ToolError("File must contain a JSON list of note objects")
+
+    prepared = []
+    for i, note in enumerate(batch):
+        if not isinstance(note, dict) or "fields" not in note:
+            raise ToolError(f"Entry {i} is not a note object with 'fields'")
+        prepared.append({
+            "deckName": deck_name or note.get("deckName"),
+            "modelName": model_name or note.get("modelName"),
+            "fields": note["fields"],
+            "tags": note.get("tags"),
+            "allowDuplicate": allow_duplicate,
+        })
+    missing = [i for i, n in enumerate(prepared) if not n["deckName"] or not n["modelName"]]
+    if missing:
+        raise ToolError(f"Entries missing deckName/modelName: {missing[:10]}")
+
+    decks = sorted({n["deckName"] for n in prepared})
+    models = sorted({n["modelName"] for n in prepared})
+    if dry_run:
+        first = prepared[0]
+        return {"dry_run": True, "path": path, "count": len(prepared),
+                "decks": decks, "models": models,
+                "field_names": sorted(first["fields"]),
+                "first": {k: (v[:120] + "..." if len(v) > 120 else v)
+                          for k, v in first["fields"].items()},
+                "hint": "re-run with dry_run=false to apply"}
+
+    result = add_notes(prepared)
+    failures = [{"index": i, "error": r.get("error")}
+                for i, r in enumerate(result["results"]) if not r["success"]]
+    return {"dry_run": False, "path": path, "requested": len(prepared),
+            "added": result["added"], "failed": len(failures),
+            "failures": failures[:20], "decks": decks, "models": models,
+            "noteIds": [r.get("noteId") for r in result["results"] if r["success"]]}
+
+
 def delete_notes(notes: list[int], confirmDeletion: bool = False):
     if not confirmDeletion:
         raise ToolError("Must confirm deletion", hint="Set confirmDeletion=true")

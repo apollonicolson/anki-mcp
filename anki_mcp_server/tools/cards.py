@@ -66,6 +66,38 @@ def set_due_date(cards: list[int], days: str):
     return {"rescheduled": len(cards), "days": days}
 
 
+@T("reposition-new", "Set the new-card queue order for cards", write=True)
+def reposition_new(query: str = None, cards: list[int] = None, starting_from: int = 1,
+                   step_size: int = 1, randomize: bool = False,
+                   shift_existing: bool = False, order_by_note_id: bool = True):
+    """Give new cards an explicit queue position.
+
+    add_note takes its position from the deck config, and a collection set to
+    random insertion scatters a lesson sequence. Sequenced material (a book worked
+    chapter by chapter) needs position to follow source order, so it is set here
+    rather than left to the config.
+
+    order_by_note_id sorts ascending before assigning, which matches insertion
+    order for notes added in one batch.
+    """
+    if not query and not cards:
+        raise ToolError("Name the cards: pass query or cards")
+    ids = [int(c) for c in cards] if cards else col().find_cards(query)
+    if not ids:
+        return {"repositioned": 0, "note": "no cards matched"}
+    if order_by_note_id:
+        ids = sorted(ids, key=lambda cid: (col().get_card(cid).nid, cid))
+
+    changes = col().sched.reposition_new_cards(
+        card_ids=ids, starting_from=int(starting_from), step_size=int(step_size),
+        randomize=bool(randomize), shift_existing=bool(shift_existing),
+    )
+    return {"repositioned": getattr(changes, "count", len(ids)),
+            "cards": len(ids), "starting_from": starting_from,
+            "step_size": step_size, "randomize": randomize,
+            "shift_existing": shift_existing}
+
+
 def answer_cards(answers: list[dict]):
     for a in answers:
         c = col().get_card(a["cardId"])
