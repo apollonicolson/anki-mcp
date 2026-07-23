@@ -526,6 +526,15 @@ def _resolve_target_ids(target: dict[str, Any], entity: str) -> list[int]:
         return [int(x) for x in target["ids"]]
     query = target.get("query", "")
     where = target.get("where")
+    # An omitted target is a mistake, not a request to mutate the whole collection.
+    # find_notes("") matches every note, so a misspelled key (from= instead of
+    # query=) silently widens a delete from a subdeck to all 144k notes.
+    if not query and not where and not target.get("all"):
+        raise ToolError(
+            "transact target is unbounded: no ids, query, or where",
+            hint='name the target explicitly, e.g. target={"query": "deck:X"}; '
+                 'pass target={"all": true} only if you truly mean every note',
+        )
     if entity == "notes":
         ids = col().find_notes(query)
         if not where:
