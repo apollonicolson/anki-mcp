@@ -25,6 +25,20 @@ import logging
 
 from ..handler_registry import register_handler
 
+# Datoms inlined into a tool response before falling back to a sample.
+INLINE_DATOM_LIMIT = 50
+# A note's flds value is the whole note. Counting datoms is not enough to bound a
+# response - 25 deleted notes produced 98 KB - so values are truncated too. The
+# journal keeps them in full; the response only has to be readable.
+INLINE_VALUE_CHARS = 120
+
+
+def _abbrev_datom(fact: list) -> list:
+    entity, attribute, value, op = fact
+    if isinstance(value, str) and len(value) > INLINE_VALUE_CHARS:
+        value = value[:INLINE_VALUE_CHARS] + f"...(+{len(value) - INLINE_VALUE_CHARS})"
+    return [entity, attribute, value, op]
+
 logger = logging.getLogger(__name__)
 
 _registry: dict[str, dict] = {}
@@ -173,8 +187,21 @@ def _journalled(func: Callable, tool_name: str) -> Callable:
                 if isinstance(result, dict):
                     result.setdefault("txid", txid)
                     result.setdefault("datom_count", len(facts))
+                    # Inline only a sample. A bulk delete produces ~10 datoms per
+                    # note, so a 4,767-note op returned 5.7 MB of JSON - past the
+                    # caller's limit, and useless besides. The full set is in the
+                    # journal, reachable by txid.
                     if facts:
-                        result.setdefault("datoms", facts)
+                        inlined = [_abbrev_datom(f) for f in facts[:INLINE_DATOM_LIMIT]]
+                        if len(facts) > INLINE_DATOM_LIMIT:
+                            result.setdefault("datoms_sample", inlined)
+                            result.setdefault(
+                                "datoms_note",
+                                f"{len(facts)} datoms journalled; {INLINE_DATOM_LIMIT} shown, "
+                                f"values truncated. Full set: journal-tail txid={txid}",
+                            )
+                        else:
+                            result.setdefault("datoms", inlined)
 
         return result
 
