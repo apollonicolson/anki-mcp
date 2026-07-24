@@ -59,13 +59,20 @@ def _body(fields: list[str], key_field: int) -> str:
     return WS_RE.sub(" ", re.sub(r"[^\w\s]", "", text.lower())).strip()
 
 
-def _compatible(ids: list, rows: dict, key_field: int) -> list:
-    """The largest subset of a key group whose bodies are versions of one fact.
+def _clusters(ids: list, rows: dict, key_field: int) -> list:
+    """Partition a key group into clusters, each a set of one fact's versions.
 
-    Compatible means containment (a later year extending an earlier definition)
-    or high similarity (cosmetic drift). An image-only note has an empty body and
-    is compatible with anything sharing its key, since it adds rather than
-    contradicts.
+    A shared key is not one fact: "quadratic equation" may have eight identical
+    definitions plus one genuinely different one. Anchoring compatibility on the
+    single richest note skipped the whole group whenever that richest note was the
+    outlier - so the eight identical copies never merged. Clustering by mutual
+    compatibility instead lets the eight collapse while the outlier stays its own
+    note.
+
+    Compatible means containment (a later year extending an earlier definition) or
+    high similarity (cosmetic drift). An empty body (image-only) joins any cluster
+    sharing its key, since it adds rather than contradicts. Returns a list of
+    clusters; callers merge only those with 2+ members.
     """
     from difflib import SequenceMatcher
 
@@ -79,10 +86,17 @@ def _compatible(ids: list, rows: dict, key_field: int) -> list:
             return True
         return SequenceMatcher(None, x, y).ratio() >= BODY_SIMILARITY
 
-    # Anchor on the richest note; a merge is only meaningful relative to the
-    # version that will survive.
-    anchor = max(ids, key=lambda i: len(bodies[i]))
-    return [anchor] + [i for i in ids if i != anchor and ok(anchor, i)]
+    # Seed clusters richest-first, so each cluster's representative is its fullest
+    # version; assign every note to the first cluster it matches, else open a new one.
+    clusters: list[list] = []
+    for i in sorted(ids, key=lambda i: -len(bodies[i])):
+        for cluster in clusters:
+            if ok(cluster[0], i):
+                cluster.append(i)
+                break
+        else:
+            clusters.append([i])
+    return clusters
 
 
 @T("merge-duplicates", "Merge same-key notes, keeping the most complete field values",
@@ -119,33 +133,36 @@ def merge_duplicates(query: str, key_field: int = 0, dry_run: bool = True,
     for (mid, k), ids in sorted(groups.items(), key=lambda kv: kv[0][1]):
         if len(ids) < 2:
             continue
-        # A matching key is not sufficient. "A2" is Euclid's second axiom in one
-        # deck and the Algebra 2 course label in another; some imported notes are
-        # reversed, carrying the definition in field 0. Require the bodies to be
-        # versions of one fact before treating them as one fact.
-        ids = _compatible(ids, rows, key_field)
-        if len(ids) < 2:
+        # A matching key is not one fact. "A2" is Euclid's second axiom in one deck
+        # and the Algebra 2 course label in another; "quadratic equation" has eight
+        # identical definitions plus one different one. Cluster by mutual body
+        # compatibility, then merge each cluster of 2+ on its own.
+        any_merged = False
+        for ids in _clusters(ids, rows, key_field):
+            if len(ids) < 2:
+                continue
+            any_merged = True
+            width = max(len(rows[i]["fields"]) for i in ids)
+            merged = [
+                _richest([rows[i]["fields"][f] if f < len(rows[i]["fields"]) else ""
+                          for i in ids])
+                for f in range(width)
+            ]
+            studied = [i for i in ids if rows[i]["reps"] > 0]
+            if studied:
+                # Most-reviewed note keeps its identity, and with it its cards.
+                survivor = max(studied, key=lambda i: (rows[i]["reps"], i))
+            else:
+                survivor = max(ids, key=lambda i: sum(_visible_len(v)
+                                                      for v in rows[i]["fields"]))
+            losers = [i for i in ids if i != survivor]
+            changed = merged != rows[survivor]["fields"][:len(merged)]
+            plans.append({"key": k, "survivor": survivor, "delete": losers,
+                          "merged": merged, "content_updated": changed,
+                          "kept_studied": bool(studied),
+                          "studied_lost": sum(1 for i in losers if rows[i]["reps"] > 0)})
+        if not any_merged:
             skipped.append(k)
-            continue
-        width = max(len(rows[i]["fields"]) for i in ids)
-        merged = [
-            _richest([rows[i]["fields"][f] if f < len(rows[i]["fields"]) else ""
-                      for i in ids])
-            for f in range(width)
-        ]
-        studied = [i for i in ids if rows[i]["reps"] > 0]
-        if studied:
-            # Most-reviewed note keeps its identity, and with it its cards.
-            survivor = max(studied, key=lambda i: (rows[i]["reps"], i))
-        else:
-            survivor = max(ids, key=lambda i: sum(_visible_len(v)
-                                                  for v in rows[i]["fields"]))
-        losers = [i for i in ids if i != survivor]
-        changed = merged != rows[survivor]["fields"][:len(merged)]
-        plans.append({"key": k, "survivor": survivor, "delete": losers,
-                      "merged": merged, "content_updated": changed,
-                      "kept_studied": bool(studied),
-                      "studied_lost": sum(1 for i in losers if rows[i]["reps"] > 0)})
 
     if limit:
         plans = plans[: int(limit)]
