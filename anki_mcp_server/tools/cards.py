@@ -67,8 +67,8 @@ def set_due_date(cards: list[int], days: str):
 
 
 @T("reposition-new", "Set the new-card queue order for cards", write=True)
-def reposition_new(query: str = None, cards: list[int] = None, starting_from: int = 1,
-                   step_size: int = 1, randomize: bool = False,
+def reposition_new(query: str = None, cards: list[int] = None, cards_file: str = None,
+                   starting_from: int = 1, step_size: int = 1, randomize: bool = False,
                    shift_existing: bool = False, order_by_note_id: bool = True):
     """Give new cards an explicit queue position.
 
@@ -77,11 +77,23 @@ def reposition_new(query: str = None, cards: list[int] = None, starting_from: in
     chapter by chapter) needs position to follow source order, so it is set here
     rather than left to the config.
 
+    cards_file reads an ordered id list from {"cards": [...]} - the order in the
+    file IS the queue order (implies order_by_note_id=False), for sequences too
+    long to pass inline, e.g. a whole deck ranked by curriculum position.
+
     order_by_note_id sorts ascending before assigning, which matches insertion
     order for notes added in one batch.
     """
+    if cards_file:
+        import json
+        import os
+        if not os.path.isfile(cards_file):
+            raise ToolError(f"No such file: {cards_file}")
+        doc = json.load(open(cards_file, encoding="utf-8"))
+        cards = doc.get("cards", doc) if isinstance(doc, dict) else doc
+        order_by_note_id = False          # the file's order is the intended order
     if not query and not cards:
-        raise ToolError("Name the cards: pass query or cards")
+        raise ToolError("Name the cards: pass query, cards, or cards_file")
     ids = [int(c) for c in cards] if cards else col().find_cards(query)
     if not ids:
         return {"repositioned": 0, "note": "no cards matched"}
