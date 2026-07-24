@@ -119,7 +119,8 @@ def merge_duplicates(query: str, key_field: int = 0, dry_run: bool = True,
     for nid in note_ids:
         note = col().get_note(nid)
         reps = max((c.reps for c in note.cards()), default=0)
-        rows[nid] = {"mid": note.mid, "fields": list(note.fields), "reps": reps}
+        rows[nid] = {"mid": note.mid, "fields": list(note.fields), "reps": reps,
+                     "tags": list(note.tags)}
 
     groups = defaultdict(list)
     for nid, row in rows.items():
@@ -157,8 +158,14 @@ def merge_duplicates(query: str, key_field: int = 0, dry_run: bool = True,
                                                       for v in rows[i]["fields"]))
             losers = [i for i in ids if i != survivor]
             changed = merged != rows[survivor]["fields"][:len(merged)]
+            # Union tags across the cluster: a position tag on a loser (the deck it
+            # was drilled in) is data the survivor must inherit, or the merge loses
+            # the very progression the tags encode.
+            tag_union = sorted({t for i in ids for t in rows[i]["tags"]})
             plans.append({"key": k, "survivor": survivor, "delete": losers,
-                          "merged": merged, "content_updated": changed,
+                          "merged": merged, "tags": tag_union,
+                          "tags_added": sorted(set(tag_union) - set(rows[survivor]["tags"])),
+                          "content_updated": changed,
                           "kept_studied": bool(studied),
                           "studied_lost": sum(1 for i in losers if rows[i]["reps"] > 0)})
         if not any_merged:
@@ -200,6 +207,7 @@ def merge_duplicates(query: str, key_field: int = 0, dry_run: bool = True,
         merged = plan["merged"]
         for idx in range(min(len(note.fields), len(merged))):
             note.fields[idx] = merged[idx]
+        note.tags = plan["tags"]              # union of the whole cluster's tags
         col().update_note(note)
 
     doomed = [i for p in plans for i in p["delete"]]
