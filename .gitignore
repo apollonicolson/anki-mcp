@@ -34,3 +34,6 @@ Desktop.ini
 
 # Logs
 *.log
+
+# Anki writes per-install state beside the add-on
+anki_mcp_server/meta.json

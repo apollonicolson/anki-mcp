@@ -157,6 +157,81 @@ def import_notes_file(path: str, deck_name: str = None, model_name: str = None,
             "noteIds": [r.get("noteId") for r in result["results"] if r["success"]]}
 
 
+@T("update-fields-file", "Bulk-fill one field on notes matched by a key field, from a JSON file", write=True)
+def update_fields_file(path: str, dry_run: bool = True):
+    """Fill a single field on many existing notes, matched by a stable key field.
+
+    Built for parallel-corpus population: a whole-Bible {ref: text} map fills, say,
+    the Hebrew "Text MT" field on every Logos PCE note whose "Ref." matches - one
+    journaled pass, no per-note tool calls. The file carries the payload so 31k
+    verses never travel through the request.
+
+    File shape:
+        {"query": "note:\\"Logos PCE\\"",   # REQUIRED scope - never the whole collection
+         "match_field": "Ref.",            # key field to join on (default "Ref.")
+         "field": "Text MT",               # field to fill
+         "values": {"Genesis 1:1": "...", ...}}
+
+    Reports matched / unmatched so versification gaps (e.g. Psalm numbering) surface
+    as concrete unmatched refs instead of silent misses.
+    """
+    import json
+    import os
+
+    from . import _journal
+
+    if not os.path.isfile(path):
+        raise ToolError(f"No such file: {path}")
+    doc = json.load(open(path, encoding="utf-8"))
+    query = doc.get("query")
+    field = doc.get("field")
+    match_field = doc.get("match_field", "Ref.")
+    values = doc.get("values")
+    if not query:
+        raise ToolError('File needs a "query" scope', hint='e.g. "query": "note:\\"Logos PCE\\""')
+    if not field:
+        raise ToolError('File needs a "field" to fill')
+    if not isinstance(values, dict) or not values:
+        raise ToolError('File needs "values": {key: text}')
+
+    # Map key-field value -> (note_id, field_index) over the scoped notes only.
+    key_to_note: dict[str, tuple] = {}
+    ambiguous = 0
+    for nid in col().find_notes(query):
+        note = col().get_note(nid)
+        names = [f["name"] for f in note.note_type()["flds"]]
+        if match_field not in names or field not in names:
+            continue
+        k = note.fields[names.index(match_field)]
+        if k in key_to_note:
+            ambiguous += 1
+        else:
+            key_to_note[k] = (nid, names.index(field))
+
+    matched = {k: v for k, v in values.items() if k in key_to_note}
+    unmatched = [k for k in values if k not in key_to_note]
+    summary = {"field": field, "match_field": match_field, "query": query,
+               "provided": len(values), "matched": len(matched),
+               "unmatched": len(unmatched), "unmatched_sample": unmatched[:25],
+               "ambiguous_keys_in_scope": ambiguous}
+    if dry_run:
+        summary["dry_run"] = True
+        summary["hint"] = "re-run with dry_run=false to apply"
+        return summary
+
+    _journal.declare_targets(col(), [key_to_note[k][0] for k in matched])
+    updated = 0
+    for k, val in matched.items():
+        nid, fidx = key_to_note[k]
+        note = col().get_note(nid)
+        note.fields[fidx] = str(val)
+        col().update_note(note)
+        updated += 1
+    summary["dry_run"] = False
+    summary["updated"] = updated
+    return summary
+
+
 def delete_notes(notes: list[int], confirmDeletion: bool = False):
     if not confirmDeletion:
         raise ToolError("Must confirm deletion", hint="Set confirmDeletion=true")
