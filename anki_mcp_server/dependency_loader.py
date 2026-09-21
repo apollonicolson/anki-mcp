@@ -1,8 +1,10 @@
 """Lazy-loader for pydantic_core - downloads correct wheel from PyPI on first run."""
 
+import platform as _platform
 import sys
 import sysconfig
 import json
+import re
 import urllib.request
 import zipfile
 import shutil
@@ -12,7 +14,20 @@ from pathlib import Path
 from aqt.qt import QProgressDialog, QMessageBox, QApplication
 
 CACHE_DIR = Path(__file__).parent / "_cache"
-PYPI_URL = "https://pypi.org/pypi/pydantic-core/json"
+PYDANTIC_VERSION_FILE = Path(__file__).parent / "vendor" / "shared" / "pydantic" / "version.py"
+
+
+def _required_core_version() -> str:
+    """The exact pydantic_core version the vendored pydantic accepts (it raises on any other)."""
+    text = PYDANTIC_VERSION_FILE.read_text(encoding="utf-8")
+    match = re.search(r"_COMPATIBLE_PYDANTIC_CORE_VERSION\s*=\s*['\"]([^'\"]+)['\"]", text)
+    if not match:
+        raise RuntimeError(f"No _COMPATIBLE_PYDANTIC_CORE_VERSION in {PYDANTIC_VERSION_FILE}")
+    return match.group(1)
+
+
+def _pypi_url() -> str:
+    return f"https://pypi.org/pypi/pydantic-core/{_required_core_version()}/json"
 
 
 def _get_platform_tag() -> str:
@@ -46,8 +61,9 @@ def _find_wheel_url(pypi_data: dict) -> str:
     py_tag = _get_python_tag()
     platform = sysconfig.get_platform()
 
-    # Determine what we're looking for
-    is_arm = "arm64" in platform or "aarch64" in platform
+    # Determine what we're looking for. The running CPU, not the build platform:
+    # Anki's macOS Python is universal2, so get_platform() names neither arch.
+    is_arm = _platform.machine().lower() in ("arm64", "aarch64")
     is_windows = platform.startswith("win")
     is_macos = "macos" in platform
     is_linux = "linux" in platform
@@ -133,7 +149,7 @@ def ensure_pydantic_core() -> bool:
         progress.setLabelText("Fetching package info...")
         QApplication.processEvents()
 
-        with urllib.request.urlopen(PYPI_URL, timeout=30) as response:
+        with urllib.request.urlopen(_pypi_url(), timeout=30) as response:
             pypi_data = json.loads(response.read().decode())
 
         if progress.wasCanceled():
