@@ -163,6 +163,22 @@ def find_and_replace_in_models(model_name: str, find: str, replace: str, front: 
     return {"replacements": count, "modelName": model_name}
 
 
+def _save_verified(m, landed, what: str):
+    """Persist a model dict and confirm the change reached the collection.
+
+    Anki's deprecation of addField -> add_field split one call into two: the
+    legacy addField/remField/renameField/addTemplate all ran the mutation AND
+    self.update(notetype); the snake_case replacements only mutate the dict.
+    A mechanical rename therefore drops the write silently and still returns
+    success. The re-read is what makes that failure observable.
+    """
+    col().models.save(m)
+    fresh = col().models.by_name(m["name"])
+    if not fresh or not landed(fresh):
+        raise ToolError(f"{what} did not persist")
+    return fresh
+
+
 def model_field_add(modelName: str, fieldName: str, index: int = None):
     m = col().models.by_name(modelName)
     if not m:
@@ -173,6 +189,8 @@ def model_field_add(modelName: str, fieldName: str, index: int = None):
         col().models.reposition_field(m, f, index)
     else:
         col().models.add_field(m, f)
+    _save_verified(m, lambda mm: any(x["name"] == fieldName for x in mm["flds"]),
+                   f"field-add {modelName}.{fieldName}")
     return {"modelName": modelName, "fieldName": fieldName}
 
 
@@ -183,6 +201,8 @@ def model_field_remove(modelName: str, fieldName: str):
     for f in m["flds"]:
         if f["name"] == fieldName:
             col().models.remove_field(m, f)
+            _save_verified(m, lambda mm: all(x["name"] != fieldName for x in mm["flds"]),
+                           f"field-remove {modelName}.{fieldName}")
             return {"modelName": modelName, "removed": fieldName}
     raise ToolError(f"Field not found: {fieldName}")
 
@@ -194,6 +214,8 @@ def model_field_rename(modelName: str, oldFieldName: str, newFieldName: str):
     for f in m["flds"]:
         if f["name"] == oldFieldName:
             col().models.rename_field(m, f, newFieldName)
+            _save_verified(m, lambda mm: any(x["name"] == newFieldName for x in mm["flds"]),
+                           f"field-rename {modelName}.{oldFieldName}")
             return {"modelName": modelName, "oldName": oldFieldName, "newName": newFieldName}
     raise ToolError(f"Field not found: {oldFieldName}")
 
@@ -205,6 +227,8 @@ def model_field_reposition(modelName: str, fieldName: str, index: int):
     for f in m["flds"]:
         if f["name"] == fieldName:
             col().models.reposition_field(m, f, index)
+            _save_verified(m, lambda mm: [x["name"] for x in mm["flds"]].index(fieldName) == index,
+                           f"field-reposition {modelName}.{fieldName}")
             return {"modelName": modelName, "fieldName": fieldName, "newIndex": index}
     raise ToolError(f"Field not found: {fieldName}")
 
@@ -217,6 +241,8 @@ def model_template_add(modelName: str, template: dict):
     t["qfmt"] = template.get("Front", "")
     t["afmt"] = template.get("Back", "")
     col().models.add_template(m, t)
+    _save_verified(m, lambda mm: any(x["name"] == t["name"] for x in mm["tmpls"]),
+                   f"template-add {modelName}.{t['name']}")
     return {"modelName": modelName, "templateName": t["name"]}
 
 
@@ -227,6 +253,8 @@ def model_template_remove(modelName: str, templateName: str):
     for t in m["tmpls"]:
         if t["name"] == templateName:
             col().models.remove_template(m, t)
+            _save_verified(m, lambda mm: all(x["name"] != templateName for x in mm["tmpls"]),
+                           f"template-remove {modelName}.{templateName}")
             return {"modelName": modelName, "removed": templateName}
     raise ToolError(f"Template not found: {templateName}")
 
@@ -238,7 +266,8 @@ def model_template_rename(modelName: str, oldTemplateName: str, newTemplateName:
     for t in m["tmpls"]:
         if t["name"] == oldTemplateName:
             t["name"] = newTemplateName
-            col().models.save(m)
+            _save_verified(m, lambda mm: any(x["name"] == newTemplateName for x in mm["tmpls"]),
+                           f"template-rename {modelName}.{oldTemplateName}")
             return {"modelName": modelName, "oldName": oldTemplateName, "newName": newTemplateName}
     raise ToolError(f"Template not found: {oldTemplateName}")
 
@@ -250,5 +279,92 @@ def model_template_reposition(modelName: str, templateName: str, index: int):
     for t in m["tmpls"]:
         if t["name"] == templateName:
             col().models.reposition_template(m, t, index)
+            _save_verified(m, lambda mm: [x["name"] for x in mm["tmpls"]].index(templateName) == index,
+                           f"template-reposition {modelName}.{templateName}")
             return {"modelName": modelName, "templateName": templateName, "newIndex": index}
     raise ToolError(f"Template not found: {templateName}")
+
+
+def model_delete(modelName: str, force: bool = False):
+    """Remove a notetype. Refuses while it still holds notes unless forced.
+
+    Anki's remove_notetype deletes the notetype AND every note using it, with no
+    per-note trace in the journal. The guard is the difference between deleting
+    an empty leftover and deleting a deck's worth of work.
+    """
+    m = col().models.by_name(modelName)
+    if not m:
+        raise ToolError(f"Model not found: {modelName}")
+    mid = m["id"]
+    n_notes = col().models.use_count(m)
+    if n_notes and not force:
+        raise ToolError(
+            f"{modelName} still holds {n_notes} note(s); deleting it deletes them too",
+            hint="move them with alter op=notetype-change first, or pass force=true",
+        )
+    col().models.remove(mid)
+    if col().models.by_name(modelName):
+        raise ToolError(f"notetype-delete {modelName} did not persist")
+    return {"modelName": modelName, "modelId": mid, "notesDeleted": n_notes}
+
+
+def model_rename(modelName: str, newName: str):
+    m = col().models.by_name(modelName)
+    if not m:
+        raise ToolError(f"Model not found: {modelName}")
+    if col().models.by_name(newName):
+        raise ToolError(f"A model named {newName} already exists")
+    m["name"] = newName
+    _save_verified(m, lambda mm: mm["name"] == newName, f"notetype-rename {modelName}")
+    return {"oldName": modelName, "newName": newName}
+
+
+def model_change_notetype(fromModel: str, toModel: str, query: str = None,
+                          ids: list[int] = None):
+    """Repoint notes onto another notetype, preserving their cards and scheduling.
+
+    This is what Browse > Notes > Change Note Type does. Export-and-reimport is
+    NOT equivalent: it mints new cards and discards the review history. Field and
+    template mapping uses the backend's defaults, which match on name and fall
+    back to position.
+    """
+    old = col().models.by_name(fromModel)
+    new = col().models.by_name(toModel)
+    if not old:
+        raise ToolError(f"Model not found: {fromModel}")
+    if not new:
+        raise ToolError(f"Model not found: {toModel}")
+
+    note_ids = [int(n) for n in (ids or [])]
+    if query:
+        note_ids.extend(int(n) for n in col().find_notes(query))
+    if not note_ids:
+        note_ids = [int(n) for n in col().models.nids(old["id"])]
+    note_ids = sorted(set(note_ids))
+    if not note_ids:
+        raise ToolError(f"No notes to move from {fromModel}")
+
+    stray = [n for n in note_ids if col().get_note(n).mid != old["id"]]
+    if stray:
+        raise ToolError(
+            f"{len(stray)} of {len(note_ids)} target notes are not {fromModel}",
+            hint="narrow the query, or pass ids explicitly",
+        )
+
+    info = col().models.change_notetype_info(
+        old_notetype_id=old["id"], new_notetype_id=new["id"]
+    )
+    req = info.input
+    req.note_ids.extend(note_ids)
+    col().models.change_notetype_of_notes(req)
+
+    moved = [n for n in note_ids if col().get_note(n).mid == new["id"]]
+    if len(moved) != len(note_ids):
+        raise ToolError(f"notetype-change moved {len(moved)} of {len(note_ids)} notes")
+    return {
+        "fromModel": fromModel,
+        "toModel": toModel,
+        "notesMoved": len(moved),
+        "fieldMap": list(req.new_fields),
+        "templateMap": list(req.new_templates),
+    }

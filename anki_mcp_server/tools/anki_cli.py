@@ -640,11 +640,32 @@ ALTER_OPS = {
     "templates-set": ("models", "update_model_templates"),
     "styling-set": ("models", "update_model_styling"),
     "create": ("models", "create_model"),
+    "notetype-delete": ("models", "model_delete"),
+    "notetype-rename": ("models", "model_rename"),
+    "notetype-change": ("models", "model_change_notetype"),
     "deck-config-save": ("decks", "save_deck_config"),
     "deck-config-set": ("decks", "set_deck_config_id"),
     "deck-config-clone": ("decks", "clone_deck_config_id"),
     "deck-config-delete": ("decks", "delete_deck_config"),
 }
+
+
+def _bind_or_raise(module_name: str, func_name: str, args: dict):
+    """Resolve an op's target function and check the args actually bind.
+
+    Without this the dry run reports success for a call the real run rejects
+    with TypeError — the one failure a dry run exists to catch.
+    """
+    import importlib
+    import inspect
+
+    func = getattr(importlib.import_module(f".{module_name}", __package__), func_name)
+    sig = inspect.signature(func)
+    try:
+        sig.bind(**args)
+    except TypeError as e:
+        raise ToolError(f"{func_name}: {e}", hint=f"accepts {sorted(sig.parameters)}")
+    return func
 
 
 def _alter(request: dict[str, Any]) -> dict[str, Any]:
@@ -653,13 +674,13 @@ def _alter(request: dict[str, Any]) -> dict[str, Any]:
     Not journal-revertible: the datom model covers notes and cards, not notetype
     definitions. A snapshot is taken first so the change is always recoverable.
     """
-    import importlib
-
     op = request.get("op")
     if op not in ALTER_OPS:
         raise ToolError(f"Unknown alter op: {op}", hint=f"one of {sorted(ALTER_OPS)}")
 
     args = {k: v for k, v in request.items() if k not in ("cmd", "op", "dry_run", "snapshot")}
+    module_name, func_name = ALTER_OPS[op]
+    func = _bind_or_raise(module_name, func_name, args)
     if request.get("dry_run", True):
         return {"cmd": "alter", "op": op, "args": args, "dry_run": True,
                 "warning": "schema changes force a full AnkiWeb re-upload",
@@ -672,12 +693,11 @@ def _alter(request: dict[str, Any]) -> dict[str, Any]:
 
     # Capture the notetype definitions before the change. Definition-only ops can
     # then be reverted from the journal; structural ones still need the snapshot.
-    names = [args.get(k) for k in ("modelName", "model_name", "name") if args.get(k)]
+    names = [args.get(k) for k in ("modelName", "model_name", "name",
+                                   "fromModel", "toModel") if args.get(k)]
     _journal.declare_schema(col(), names, op)
 
-    module_name, func_name = ALTER_OPS[op]
-    module = importlib.import_module(f".{module_name}", __package__)
-    result = getattr(module, func_name)(**args)
+    result = func(**args)
     return {"cmd": "alter", "op": op, "dry_run": False, "snapshot": snapshot["snapshot"],
             "result": result,
             "revertible": op in _journal.DEFINITION_ONLY_OPS,
