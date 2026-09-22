@@ -67,6 +67,7 @@ class McpServer:
         self._config = config
         self._thread: threading.Thread | None = None
         self._shutdown_event = threading.Event()
+        self._uvicorn: uvicorn.Server | None = None
 
     def start(self) -> None:
         """Start MCP server in background thread.
@@ -84,18 +85,19 @@ class McpServer:
     def stop(self) -> None:
         """Signal shutdown.
 
-        Sets the shutdown event. The daemon thread will be terminated
-        automatically when Anki's process exits.
-
-        Note:
-            We don't wait for the thread - uvicorn doesn't respond to
-            shutdown events, so waiting would just add unnecessary delay.
-            The daemon=True flag ensures clean process exit.
+        Asks uvicorn to exit and waits up to 5 seconds for the thread, so the
+        port is released before a following start() (e.g. profile switch).
 
         Thread Safety:
             Safe to call from main thread (Qt event loop).
         """
         self._shutdown_event.set()
+        if self._uvicorn is not None:
+            self._uvicorn.should_exit = True
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+            self._thread = None
+        self._uvicorn = None
 
     def _run(self) -> None:
         """Thread entry point - runs asyncio event loop.
@@ -193,14 +195,6 @@ class McpServer:
         Args:
             mcp: Configured FastMCP server instance with tools defined
 
-        Note:
-            Shutdown handling is best-effort for v1. Uvicorn's serve() blocks
-            and we use a daemon thread, so the server will be forcibly terminated
-            when Anki closes. This is acceptable for v1 since:
-            - Daemon thread won't block Anki shutdown
-            - MCP is stateless - no data loss from abrupt termination
-            - Future versions can implement proper shutdown via server.shutdown()
-
         Thread Safety:
             Runs in background thread. Never accesses Qt or Anki APIs directly.
         """
@@ -213,8 +207,7 @@ class McpServer:
             log_level="warning",
         )
         server = uvicorn.Server(config)
-
-        # Note: server.serve() blocks until shutdown
-        # For v1, daemon=True on thread handles cleanup
-        # TODO(future): Implement graceful shutdown via server.shutdown()
+        self._uvicorn = server
+        if self._shutdown_event.is_set():
+            return
         await server.serve()
